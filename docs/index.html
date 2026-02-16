@@ -66,11 +66,20 @@
             flex-shrink: 0;
             width: 100%;
         }
+        /* Rich editor list styles (Tailwind preflight removes defaults) */
+        .rich-editor ul { list-style-type: disc; padding-left: 1.5em; margin: 0.5em 0; }
+        .rich-editor ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.5em 0; }
+        .rich-editor li { margin: 0.25em 0; }
+        /* Reader content list styles */
+        .reader-content ul { list-style-type: disc; padding-left: 1.5em; margin: 0.5em 0; }
+        .reader-content ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.5em 0; }
+        .reader-content li { margin: 0.25em 0; }
     </style>
     <script src="https://js.stripe.com/v3/"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
     <!-- Import map removed - Vite handles module resolution from node_modules -->
 <!-- <link rel="stylesheet" href="index.css"> -->
-  <script type="module" crossorigin src="/Mainwrld/assets/index-DilNHuY5.js"></script>
+  <script type="module" crossorigin src="/Mainwrld/assets/index-BDCFcrrs.js"></script>
 </head>
 <body class="bg-white dark:bg-black transition-colors duration-300">
     <div id="root"></div>

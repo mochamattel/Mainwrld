@@ -39,9 +39,44 @@ const STRIPE_PAYMENT_LINKS: Record<string, string> = {
   'points_1000': 'https://buy.stripe.com/test_3cI9AMcZC9Lb1kM8ZMdwc00',
 };
 
+// Stripe subscription for Premium membership
+const STRIPE_PREMIUM_PAYMENT_LINK = 'https://buy.stripe.com/test_premium'; // Replace with real Stripe Payment Link
+const STRIPE_PREMIUM_PRICE_ID = ''; // Replace with Stripe recurring price ID
+
 // For book purchases, Mocha should create a product in Stripe for each book
 // OR use a single "Book Purchase" product with variable pricing
 const STRIPE_BOOK_PRICE_ID = ''; // Single book product price ID
+
+// --- EmailJS Configuration (for welcome emails) ---
+// Sign up at https://www.emailjs.com and create a service + template
+// Template should have variables: {{to_email}}, {{to_name}}, {{username}}
+const EMAILJS_SERVICE_ID = ''; // e.g. 'service_xxx'
+const EMAILJS_TEMPLATE_ID = ''; // e.g. 'template_xxx'
+const EMAILJS_PUBLIC_KEY = ''; // e.g. 'user_xxx'
+declare const emailjs: any;
+
+const sendWelcomeEmail = async (email: string, displayName: string, username: string) => {
+  try {
+    if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
+      console.log('[MainWRLD] Welcome email skipped — EmailJS not configured.');
+      console.log(`[MainWRLD] Would send welcome email to: ${email} for user ${displayName} (@${username})`);
+      return;
+    }
+    if (typeof emailjs === 'undefined') {
+      console.log('[MainWRLD] EmailJS SDK not loaded.');
+      return;
+    }
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: email,
+      to_name: displayName,
+      username: username,
+      app_name: 'MainWRLD',
+    }, EMAILJS_PUBLIC_KEY);
+    console.log('[MainWRLD] Welcome email sent to', email);
+  } catch (err) {
+    console.error('[MainWRLD] Failed to send welcome email:', err);
+  }
+};
 
 // --- Types & Interfaces ---
 
@@ -50,7 +85,8 @@ type View =
   | 'home' | 'explore' | 'library' | 'write' | 'publishing' 
   | 'monetization-request' | 'self-profile' | 'customization' 
   | 'profile' | 'book-detail' | 'reading' | 'notifications' 
-  | 'notification-settings' | 'settings' | 'comments' | 'blocked-users' | 'admin-dashboard' | 'daily-rewards' | 'cart';
+  | 'notification-settings' | 'settings' | 'comments' | 'blocked-users' | 'admin-dashboard' | 'daily-rewards' | 'cart'
+  | 'chat' | 'chat-conversation';
 
 interface User {
   username: string;
@@ -66,10 +102,14 @@ interface User {
   strikes: number;
   admiringCount?: number;
   avatar?: AvatarConfig;
+  isPremium?: boolean;
+  premiumSince?: string;
 }
 
 interface UserRecord extends User {
   password: string;
+  email?: string;
+  birthDate?: string;
 }
 
 interface NotificationItem {
@@ -82,6 +122,15 @@ interface NotificationItem {
   sender?: string;
 }
 
+interface ChatMessage {
+  id: string;
+  from: string;
+  to: string;
+  text: string;
+  timestamp: string;
+  read: boolean;
+}
+
 interface Relationship {
   admirer: string;
   target: string;
@@ -91,6 +140,7 @@ interface Relationship {
 interface Comment {
   id: string;
   bookId: string;
+  chapterIndex?: number; // For per-chapter comments. undefined = book-level comment
   author: string;
   text: string;
   likes: number;
@@ -151,6 +201,7 @@ interface Book {
   commentsCount: number;
   publishedDate: string; // ISO format or YYYY-MM-DD
   isCompleted: boolean;
+  wasCompleted?: boolean; // true after ever being marked completed — locks editing
   isExplicit: boolean;
   chaptersCount: number;
   category?: 'Trending' | 'Recently Read' | 'Recommended' | 'Library';
@@ -178,6 +229,13 @@ const MIN_WORD_COUNT = 150;
 const MAX_WORD_COUNT = 10000
 const GENRE_LIST = ['Mystery', 'Sci-Fi', 'Romance', 'Horror', 'Dystopian', 'Fantasy', 'Action', 'Drama', 'Western', 'Thriller', 'FanFic', 'Poetry', 'Religious', 'Erotica', 'LGBTQ+', 'Self-Help', 'Sports'];
 const ADMIN_USERNAMES = ['admin', 'mochamattel'];
+
+// Bad words filter for usernames and display names
+const BAD_WORDS = ['fuck','shit','ass','bitch','dick','cock','pussy','damn','bastard','slut','whore','cunt','nigger','nigga','fag','faggot','retard','rape','penis','vagina','anal','porn','hentai','cum','jizz','dildo','nude','naked','sex','xxx','tits','boob','kys','kms','stfu'];
+const containsBadWord = (text: string): boolean => {
+  const lower = text.toLowerCase().replace(/[^a-z]/g, '');
+  return BAD_WORDS.some(word => lower.includes(word));
+};
 
 const SKIN_TONE_COLORS: Record<string, string> = {
   A1: '#FDDCC4', A2: '#F2C4A0', A3: '#D9A87C', A4: '#C68E5B', A5: '#A0714A', A6: '#7A5539', A7: '#4A3228',
@@ -619,7 +677,12 @@ const App: React.FC = () => {
     return INITIAL_BOOKS;
   });
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
+  const [readingChapterIndex, setReadingChapterIndex] = useState(0);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
+  const [selectedChatUser, setSelectedChatUser] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    try { return JSON.parse(localStorage.getItem('mainwrld_chat_messages') || '[]'); } catch { return []; }
+  });
   const [moveDir, setMoveDir] = useState(new THREE.Vector3());
   const [readerSettings, setReaderSettings] = useState({ fontSize: 13, inverted: false, scrollMode: true });
 
@@ -641,6 +704,18 @@ const App: React.FC = () => {
   });
 
   const isAdmin = ADMIN_USERNAMES.includes(user.username);
+
+  // Check if current user is under 16 (for explicit content filtering)
+  const userIsUnder16 = useMemo(() => {
+    const userRecord = registeredUsers.find(u => u.username === user.username) as any;
+    if (!userRecord?.birthDate) return false;
+    const birth = new Date(userRecord.birthDate);
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+    return age < 16;
+  }, [registeredUsers, user.username]);
 
   // Reports state
   const [reports, setReports] = useState<Report[]>(() => {
@@ -719,16 +794,24 @@ const App: React.FC = () => {
     return saved ? new Set(JSON.parse(saved)) : new Set();
   });
 
-  // Reading activity: tracks what each user is currently reading { username: { bookId, progress, lastRead } }
-  const [readingActivity, setReadingActivity] = useState<Record<string, { bookId: string; progress: number; lastRead: string }>>(() => {
+  // Reading activity: tracks what each user has been reading { username: [{ bookId, progress, lastRead }, ...] }
+  const [readingActivity, setReadingActivity] = useState<Record<string, { bookId: string; progress: number; lastRead: string }[]>>(() => {
     try {
       const saved = localStorage.getItem('mainwrld_reading_activity');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Migrate old format (single object per user) to new format (array per user)
+        const migrated: Record<string, any[]> = {};
+        for (const [key, val] of Object.entries(parsed)) {
+          migrated[key] = Array.isArray(val) ? val : [val];
+        }
+        return migrated;
+      }
     } catch {}
     // Seed mock data so profiles aren't empty
     return {
-      'jemma_b': { bookId: 'e1', progress: 62, lastRead: new Date().toISOString() },
-      'mark_da_don': { bookId: 'e2', progress: 34, lastRead: new Date().toISOString() },
+      'jemma_b': [{ bookId: 'e1', progress: 62, lastRead: new Date().toISOString() }],
+      'mark_da_don': [{ bookId: 'e2', progress: 34, lastRead: new Date().toISOString() }],
     };
   });
 
@@ -865,6 +948,24 @@ const App: React.FC = () => {
   }, [reports]);
 
   useEffect(() => {
+    localStorage.setItem('mainwrld_chat_messages', JSON.stringify(chatMessages));
+  }, [chatMessages]);
+
+  // Mark messages as read when viewing a chat conversation
+  useEffect(() => {
+    if (view === 'chat-conversation' && selectedChatUser) {
+      const hasUnread = chatMessages.some(m => m.from === selectedChatUser && m.to === user.username && !m.read);
+      if (hasUnread) {
+        setChatMessages(prev => prev.map(m =>
+          m.from === selectedChatUser && m.to === user.username && !m.read
+            ? { ...m, read: true }
+            : m
+        ));
+      }
+    }
+  }, [view, selectedChatUser]);
+
+  useEffect(() => {
     localStorage.setItem('mainwrld_relationships', JSON.stringify(relationships));
   }, [relationships]);
 
@@ -922,11 +1023,20 @@ const App: React.FC = () => {
       window.history.replaceState({}, '', window.location.pathname);
       return;
     }
+    // Handle premium subscription success
+    if (urlParams.get('premium_success') === 'true') {
+      setUser(prev => ({ ...prev, isPremium: true, premiumSince: new Date().toISOString() }));
+      showToast('Welcome to MainWRLD Premium!', 'workspace_premium');
+      localStorage.removeItem('mainwrld_pending_premium');
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
     if (urlParams.get('payment_cancelled') === 'true') {
       showToast('Payment cancelled.', 'info');
       localStorage.removeItem('mainwrld_pending_purchase');
       localStorage.removeItem('mainwrld_pending_coupon');
       localStorage.removeItem('mainwrld_pending_points');
+      localStorage.removeItem('mainwrld_pending_premium');
       window.history.replaceState({}, '', window.location.pathname);
       return;
     }
@@ -949,6 +1059,28 @@ const App: React.FC = () => {
           },
           onCancel: () => {
             localStorage.removeItem('mainwrld_pending_points');
+          },
+        });
+      }
+    }
+    // Auto-detect pending premium subscription
+    const pendingPremium = JSON.parse(localStorage.getItem('mainwrld_pending_premium') || 'null');
+    if (pendingPremium) {
+      const timeSinceSet = Date.now() - (pendingPremium.timestamp || 0);
+      if (timeSinceSet > 5000) {
+        showConfirm({
+          title: 'Subscription Complete?',
+          message: 'Did you complete the MainWRLD Premium subscription?',
+          confirmLabel: 'Yes, Activate',
+          cancelLabel: 'No',
+          icon: 'workspace_premium',
+          onConfirm: () => {
+            setUser(prev => ({ ...prev, isPremium: true, premiumSince: new Date().toISOString() }));
+            showToast('Welcome to MainWRLD Premium!', 'workspace_premium');
+            localStorage.removeItem('mainwrld_pending_premium');
+          },
+          onCancel: () => {
+            localStorage.removeItem('mainwrld_pending_premium');
           },
         });
       }
@@ -1036,12 +1168,17 @@ const App: React.FC = () => {
       setAuthError('Username already taken.');
       return;
     }
+    if (containsBadWord(username) || containsBadWord(displayName)) {
+      setAuthError('Username or display name contains inappropriate language.');
+      return;
+    }
 
     const newUser: UserRecord = {
       username,
       displayName,
       password,
       email,
+      birthDate: signUpForm.birthDate,
       isOnline: true,
       activity: 'Idle',
       position: [0, 0, 0],
@@ -1058,6 +1195,34 @@ const App: React.FC = () => {
     localStorage.setItem('currentUser', JSON.stringify(newUser));
     setAuthError(null);
     setView('home');
+
+    // Send welcome email asynchronously (non-blocking)
+    if (email) {
+      sendWelcomeEmail(email, displayName, username);
+    }
+    addNotification('Welcome to MainWRLD!', `Hey ${displayName}, start exploring stories and connecting with other readers!`, 'celebration', username);
+  };
+
+  const handleSendMessage = (toUsername: string, text: string) => {
+    if (!text.trim()) return;
+    if (containsBadWord(text)) {
+      showToast('Your message contains inappropriate language.', 'warning');
+      return;
+    }
+    const msg: ChatMessage = {
+      id: Math.random().toString(36).substr(2, 9),
+      from: user.username,
+      to: toUsername,
+      text: text.trim(),
+      timestamp: new Date().toISOString(),
+      read: false,
+    };
+    setChatMessages(prev => [...prev, msg]);
+    // Send notification to recipient
+    const recipientUser = registeredUsers.find(u => u.username === toUsername) || MUTUALS.find(u => u.username === toUsername);
+    if (recipientUser) {
+      addNotification('New Message', `${user.displayName}: ${text.trim().slice(0, 50)}${text.length > 50 ? '...' : ''}`, 'chat', toUsername);
+    }
   };
 
   const handleLike = (bookId: string) => {
@@ -1180,10 +1345,28 @@ const App: React.FC = () => {
   };
 
   const handleSaveToLibrary = (bookId: string) => {
-    setUserOwnsBook(bookId);
-    
-    showToast('Saved to Library!', 'bookmark');
+    const userData = userBookData[user.username] || { ownedBookIds: [], bookProgress: {} };
+    const isInLibrary = userData.ownedBookIds.includes(bookId);
+    const book = books.find(b => b.id === bookId);
+
+    if (isInLibrary) {
+      // Remove from library — but keep access if owned/free/author
+      setUserBookData(prev => {
+        const ud = { ...(prev[user.username] || { ownedBookIds: [], bookProgress: {} }) };
+        ud.ownedBookIds = ud.ownedBookIds.filter((id: string) => id !== bookId);
+        return { ...prev, [user.username]: ud };
+      });
+      showToast('Removed from Library', 'bookmark_remove');
+    } else {
+      setUserOwnsBook(bookId);
+      showToast('Saved to Library!', 'bookmark');
+    }
   };
+
+  const isBookInLibrary = useCallback((bookId: string): boolean => {
+    const userData = userBookData[user.username] || { ownedBookIds: [], bookProgress: {} };
+    return userData.ownedBookIds.includes(bookId);
+  }, [userBookData, user.username]);
 
   const handleToggleFavorite = (bookId: string) => {
     setBooks(prev => {
@@ -1210,9 +1393,10 @@ const App: React.FC = () => {
       showToast(`You can claim points again at ${nextAvailable.toLocaleTimeString()}`, 'schedule');
       return;
     }
-    setUser(prev => ({ ...prev, points: prev.points + 3 }));
+    const pts = user.isPremium ? 6 : 3;
+    setUser(prev => ({ ...prev, points: prev.points + pts }));
     setLastClaimedPoints(now);
-    showToast("3 Points claimed!", 'celebration');
+    showToast(`${pts} Points claimed!${user.isPremium ? ' (2x Premium bonus)' : ''}`, 'celebration');
   };
 
 const handleSpinWheel = () => {
@@ -1286,6 +1470,10 @@ const handleSpinWheel = () => {
 
 
   const handlePublish = (data: any) => {
+    if (containsBadWord(data.title || '') || containsBadWord(data.tagline || '') || containsBadWord(currentPublishingContent || '')) {
+      showToast('Your content contains inappropriate language. Please revise before publishing.', 'warning');
+      return;
+    }
     if (currentPublishingId) {
       // Update existing book - preserve existing metadata when just adding/updating chapters
       setBooks(prev => prev.map(b => {
@@ -1384,21 +1572,39 @@ const handleSpinWheel = () => {
   };
 
   const handleMarkCompleted = (bookId: string) => {
-    showConfirm({
-          title: 'You can only complete this action once.',
-          message: `Are you sure you want to mark this work as complete`,
-          confirmLabel: 'Yes',
-          cancelLabel: 'No',
-          icon: 'check_circle',
-          onConfirm: () => {
-            setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: true } : b));
-            showToast('Book marked as completed!', 'check_circle');
-          },
-          onCancel: () => {
-}
-    });
+    const book = books.find(b => b.id === bookId);
+    if (!book) return;
 
-    return;
+    if (book.isCompleted) {
+      // Un-mark completed — but warn that editing was locked
+      showConfirm({
+        title: 'Reopen this work?',
+        message: 'This will remove the completed status. The book will remain un-editable since it was previously completed.',
+        confirmLabel: 'Reopen',
+        cancelLabel: 'Cancel',
+        icon: 'undo',
+        onConfirm: () => {
+          setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: false, wasCompleted: true } : b));
+          if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: false, wasCompleted: true } : prev);
+          showToast('Completed status removed', 'undo');
+        },
+        onCancel: () => {}
+      });
+    } else {
+      showConfirm({
+        title: 'Mark as Completed?',
+        message: 'Once marked completed, this book will become un-editable. Are you sure?',
+        confirmLabel: 'Yes, Complete',
+        cancelLabel: 'Cancel',
+        icon: 'check_circle',
+        onConfirm: () => {
+          setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: true, wasCompleted: true } : b));
+          if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: true, wasCompleted: true } : prev);
+          showToast('Book marked as completed!', 'check_circle');
+        },
+        onCancel: () => {}
+      });
+    }
   };
 
   const handleRequestMonetization = (bookId: string) => {
@@ -1475,16 +1681,20 @@ const handleSpinWheel = () => {
   };
 
 
-  const postComment = (text: string) => {
-  if (!selectedBook?.commentsEnabled) {
-    showToast("Comments Disabled",
-    );
+  const postComment = (text: string, chapterIndex?: number) => {
+  if (selectedBook?.commentsEnabled === false) {
+    showToast("Comments Disabled");
+    return;
+  }
+  if (containsBadWord(text)) {
+    showToast('Your comment contains inappropriate language.', 'warning');
     return;
   }
 
   const newComment: Comment = {
     id: Math.random().toString(36).substr(2, 9),
     bookId: selectedBook.id,
+    chapterIndex,
     author: user.displayName,
     text,
     likes: 0,
@@ -1493,9 +1703,12 @@ const handleSpinWheel = () => {
 
   setAllComments(prev => [newComment, ...prev]);
 
+  const chapterName = chapterIndex !== undefined && selectedBook.chapters?.[chapterIndex]
+    ? ` (${selectedBook.chapters[chapterIndex].title})`
+    : '';
   addNotification(
     'New Comment',
-    `${user.displayName} commented on "${selectedBook.title}"`,
+    `${user.displayName} commented on "${selectedBook.title}"${chapterName}`,
     'chat_bubble',
     selectedBook.author.username
   );
@@ -1529,7 +1742,13 @@ const handleSpinWheel = () => {
       // Save progress per-user (both scroll position and chapter index)
       setUserBookProgress(bookId, scrollProgress, chapterIndex);
       // Update reading activity
-      setReadingActivity(prev => ({ ...prev, [user.username]: { bookId, progress: scrollProgress, lastRead: new Date().toISOString() } }));
+      setReadingActivity(prev => {
+        const userActivity = [...(prev[user.username] || [])];
+        const existing = userActivity.findIndex(a => a.bookId === bookId);
+        if (existing >= 0) userActivity[existing] = { bookId, progress: scrollProgress, lastRead: new Date().toISOString() };
+        else userActivity.unshift({ bookId, progress: scrollProgress, lastRead: new Date().toISOString() });
+        return { ...prev, [user.username]: userActivity.slice(0, 10) };
+      });
   };
 
   const handleShareBook = async (book: Book) => {
@@ -1649,6 +1868,14 @@ const handleSpinWheel = () => {
               <div><img src={`${BASE}wordlogo.png`} alt="MainWrld" className="w-[240px] drop-shadow-md" /></div>
               <div className="flex flex-col gap-4 pointer-events-auto">
                 <button onClick={() => setView('notifications')} className="w-14 h-14 bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl flex items-center justify-center text-gray-500 border border-white relative transition-all active:scale-90"><span className="material-icons-round">notifications</span></button>
+                <button onClick={() => setView('chat')} className="w-14 h-14 bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl flex items-center justify-center text-gray-500 border border-white relative transition-all active:scale-90">
+                  <span className="material-icons-round">chat</span>
+                  {chatMessages.filter(m => m.to === user.username && !m.read).length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-accent text-white text-[9px] font-bold rounded-full flex items-center justify-center border-2 border-white">
+                      {chatMessages.filter(m => m.to === user.username && !m.read).length}
+                    </span>
+                  )}
+                </button>
                 <button onClick={() => setView('daily-rewards')} className="w-14 h-14 bg-accent/90 backdrop-blur-xl rounded-2xl shadow-xl flex flex-col items-center justify-center text-white border border-white relative transition-all active:scale-90"><span className="material-icons-round">card_giftcard</span><span className="text-[7px] font-black uppercase leading-tight">Points</span></button>
               </div>
               </div>
@@ -1756,6 +1983,90 @@ const handleSpinWheel = () => {
                 </div>
               </div>
 
+              {/* Premium Membership */}
+              <div className="w-full">
+                <div className="p-8 bg-gradient-to-br from-amber-50 to-orange-50 rounded-[2.5rem] border border-amber-200 flex flex-col items-center gap-6 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-4 right-4">
+                    <span className="material-icons-round text-amber-300 text-4xl">workspace_premium</span>
+                  </div>
+                  <div className="text-center relative z-10">
+                    <h3 className="text-lg font-bold text-amber-900">MainWRLD Premium</h3>
+                    <p className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">
+                      {user.isPremium ? 'Active Subscription' : '$4.99/month'}
+                    </p>
+                  </div>
+                  {user.isPremium ? (
+                    <div className="w-full space-y-3">
+                      <div className="flex items-center gap-2 text-amber-700">
+                        <span className="material-icons-round text-sm">check_circle</span>
+                        <span className="text-xs font-bold">Ad-free reading experience</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-amber-700">
+                        <span className="material-icons-round text-sm">check_circle</span>
+                        <span className="text-xs font-bold">2x daily points (6 pts/day)</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-amber-700">
+                        <span className="material-icons-round text-sm">check_circle</span>
+                        <span className="text-xs font-bold">Premium badge on profile</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-amber-700">
+                        <span className="material-icons-round text-sm">check_circle</span>
+                        <span className="text-xs font-bold">Priority monetization review</span>
+                      </div>
+                      <div className="pt-3 text-center">
+                        <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest">
+                          Member since {user.premiumSince ? new Date(user.premiumSince).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'today'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-full space-y-3">
+                        <div className="flex items-center gap-2 text-amber-700">
+                          <span className="material-icons-round text-sm">auto_awesome</span>
+                          <span className="text-xs font-bold">Ad-free reading experience</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-amber-700">
+                          <span className="material-icons-round text-sm">auto_awesome</span>
+                          <span className="text-xs font-bold">2x daily points (6 pts/day)</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-amber-700">
+                          <span className="material-icons-round text-sm">auto_awesome</span>
+                          <span className="text-xs font-bold">Premium badge on profile</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-amber-700">
+                          <span className="material-icons-round text-sm">auto_awesome</span>
+                          <span className="text-xs font-bold">Priority monetization review</span>
+                        </div>
+                      </div>
+                      <Button className="w-full h-16 bg-amber-500 hover:bg-amber-600" onClick={() => {
+                        if (STRIPE_PREMIUM_PAYMENT_LINK && !STRIPE_PREMIUM_PAYMENT_LINK.includes('test_premium')) {
+                          localStorage.setItem('mainwrld_pending_premium', JSON.stringify({ timestamp: Date.now() }));
+                          window.location.href = STRIPE_PREMIUM_PAYMENT_LINK;
+                        } else {
+                          showConfirm({
+                            title: 'Upgrade to Premium',
+                            message: 'Subscribe to MainWRLD Premium for $4.99/month?',
+                            confirmLabel: 'Subscribe',
+                            cancelLabel: 'Maybe Later',
+                            icon: 'workspace_premium',
+                            onConfirm: () => {
+                              setUser(prev => ({ ...prev, isPremium: true, premiumSince: new Date().toISOString() }));
+                              showToast('Welcome to MainWRLD Premium!', 'workspace_premium');
+                            },
+                          });
+                        }
+                      }}>
+                        Subscribe — $4.99/mo
+                      </Button>
+                      <p className="text-[8px] text-amber-400 text-center font-bold uppercase tracking-widest flex items-center justify-center gap-1">
+                        <span className="material-icons-round text-[10px]">lock</span> Secured by Stripe • Cancel anytime
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+
                {/* Coupon Slots UI */}
               <div className="w-full space-y-6">
                 <div className="flex justify-between items-end px-4">
@@ -1848,7 +2159,7 @@ const handleSpinWheel = () => {
 
       case 'explore':
         return <ExploreView
-          books={books.filter((b: Book) => !blockedUsers.has(b.author.username) && !b.isDraft)}
+          books={books.filter((b: Book) => !blockedUsers.has(b.author.username) && !b.isDraft && !(userIsUnder16 && b.isExplicit))}
           onSelect={(b: Book) => { setSelectedBook(b); setView('book-detail'); }}
           users={[...registeredUsers.filter((u: any) => u.username !== user.username), ...MUTUALS.filter(m => !registeredUsers.some((u: any) => u.username === m.username) && m.username !== user.username)]}
           onUserSelect={(u: User) => { setSelectedProfileUser(u); setView('profile'); }}
@@ -1985,7 +2296,10 @@ const handleSpinWheel = () => {
               ) : (
                 <div className="w-32 h-32 rounded-[3rem] bg-accent/5 flex items-center justify-center text-accent text-5xl font-bold mb-6 border-4 border-white shadow-2xl">{user.displayName[0]}</div>
               )}
-              <h1 className="text-2xl font-bold">{user.displayName}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold">{user.displayName}</h1>
+                {user.isPremium && <span className="material-icons-round text-amber-500 text-lg">workspace_premium</span>}
+              </div>
               <p className="text-xs text-gray-300 font-bold uppercase tracking-widest mb-10">@{user.username}</p>
               <div className="grid grid-cols-4 gap-4 w-full px-4 mb-10">
                 <div className="text-center"><p className="text-lg font-bold">{user.points}</p><p className="text-[8px] font-bold text-gray-300 uppercase tracking-widest">Points</p></div>
@@ -2077,6 +2391,7 @@ const handleSpinWheel = () => {
             onAdmire={() => handleAdmire(selectedProfileUser)}
             onBlock={() => handleBlockUser(selectedProfileUser.username)}
             onReport={() => handleReport('User', selectedProfileUser.username)}
+            onMessage={() => { setSelectedChatUser(selectedProfileUser.username); setView('chat-conversation'); }}
             relationships={relationships}
             currentUsername={user.username}
             readingActivity={readingActivity}
@@ -2168,11 +2483,12 @@ const handleSpinWheel = () => {
             isOwned={getUserOwnedBookIds().has(selectedBook.id)}
             bookProgress={getUserBookProgress(selectedBook.id)}
             onBack={() => setView('explore')}
-            onRead={() => { setReadingActivity(prev => ({ ...prev, [user.username]: { bookId: selectedBook.id, progress: getUserBookProgress(selectedBook.id), lastRead: new Date().toISOString() } })); setView('reading'); }}
+            onRead={() => { setReadingActivity(prev => { const ua = [...(prev[user.username] || [])]; const ei = ua.findIndex(a => a.bookId === selectedBook.id); const entry = { bookId: selectedBook.id, progress: getUserBookProgress(selectedBook.id).scrollProgress, lastRead: new Date().toISOString() }; if (ei >= 0) ua[ei] = entry; else ua.unshift(entry); return { ...prev, [user.username]: ua.slice(0, 10) }; }); setView('reading'); }}
             onAuthorClick={(u: User) => { setSelectedProfileUser(u); setView('profile'); }}
             isLiked={likedBooks.has(selectedBook.id)}
             onLike={() => handleLike(selectedBook.id)}
             onSave={() => handleSaveToLibrary(selectedBook.id)}
+            isSaved={isBookInLibrary(selectedBook.id)}
             onReport={() => handleReport('Book', selectedBook.id)}
             onShare={() => handleShareBook(selectedBook)}
             onAddToCart={() => handleAddToCart(selectedBook)}
@@ -2194,11 +2510,11 @@ const handleSpinWheel = () => {
             settings={readerSettings}
             setSettings={setReaderSettings}
             onBack={() => setView('book-detail')}
-            onComments={() => setView('comments')}
+            onComments={(chapterIdx?: number) => { setReadingChapterIndex(chapterIdx ?? 0); setView('comments'); }}
             isLiked={selectedBook ? likedBooks.has(selectedBook.id) : false}
             onLike={() => selectedBook && handleLike(selectedBook.id)}
             onSave={() => selectedBook && handleSaveToLibrary(selectedBook.id)}
-            onProgressUpdate={(scrollProgress: number, chapterIndex: number) => selectedBook && handleBookProgressUpdate(selectedBook.id, scrollProgress, chapterIndex)}
+            onProgressUpdate={(scrollProgress: number, chapterIndex: number) => { setReadingChapterIndex(chapterIndex); selectedBook && handleBookProgressUpdate(selectedBook.id, scrollProgress, chapterIndex); }}
             onShare={() => selectedBook && handleShareBook(selectedBook)}
           />
         );
@@ -2218,6 +2534,8 @@ const handleSpinWheel = () => {
             onReport={(id: string) => handleReport('Comment', id)}
             onLikeComment={handleLikeComment}
             currentUsername={user.username}
+            chapters={selectedBook?.chapters || []}
+            initialChapterIndex={readingChapterIndex}
         />;
 
       case 'admin-dashboard':
@@ -2238,6 +2556,36 @@ const handleSpinWheel = () => {
             onUpdateItemPrice={handleUpdateItemPrice}
           />
         );
+
+      case 'chat':
+        return <ChatListView
+          currentUsername={user.username}
+          relationships={relationships}
+          registeredUsers={registeredUsers}
+          mutualsFallback={MUTUALS}
+          chatMessages={chatMessages}
+          blockedUsers={blockedUsers}
+          avatarConfigs={registeredUsers.reduce((acc: any, u: any) => { if (u.avatar) acc[u.username] = u.avatar; return acc; }, {})}
+          onSelectChat={(username: string) => { setSelectedChatUser(username); setView('chat-conversation'); }}
+          onBack={() => setView('home')}
+          getAvatarItemPath={getAvatarItemPath}
+        />;
+
+      case 'chat-conversation':
+        return <ChatConversationView
+          currentUsername={user.username}
+          currentDisplayName={user.displayName}
+          targetUsername={selectedChatUser || ''}
+          targetUser={registeredUsers.find(u => u.username === selectedChatUser) || MUTUALS.find(u => u.username === selectedChatUser)}
+          messages={chatMessages.filter(m =>
+            (m.from === user.username && m.to === selectedChatUser) ||
+            (m.from === selectedChatUser && m.to === user.username)
+          )}
+          onSend={(text: string) => selectedChatUser && handleSendMessage(selectedChatUser, text)}
+          onBack={() => setView('chat')}
+          getAvatarItemPath={getAvatarItemPath}
+          avatarConfig={(registeredUsers.find(u => u.username === selectedChatUser) as any)?.avatar}
+        />;
 
       default:
         return <div className="fixed inset-0 flex items-center justify-center">Missing View: {view}</div>;
@@ -2326,7 +2674,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
     });
 
     if (selectedGenres.length > 0) {
-      result = result.filter((b: Book) => selectedGenres.some(g => b.genres.includes(g)));
+      result = result.filter((b: Book) => selectedGenres.some(g => (b.genres || []).includes(g)));
     }
 
     result = [...result].sort((a: Book, b: Book) => {
@@ -2381,26 +2729,15 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
     }).slice(0, 10);
   }, [books]);
 
-  // Recently Read: 5 most recent books the user started reading
+  // Recently Read: last 3 books the user has been reading
   const recentlyRead = useMemo(() => {
-    const activity = readingActivity[currentUsername];
-    if (!activity) {
-      // Get books from readingActivity for any user
-      const allActivity = Object.entries(readingActivity)
-        .filter(([username]) => username === currentUsername)
-        .map(([_, data]: [string, any]) => ({ bookId: data.bookId, lastRead: data.lastRead }));
-
-      if (allActivity.length === 0) return [];
-
-      return allActivity
-        .sort((a, b) => new Date(b.lastRead).getTime() - new Date(a.lastRead).getTime())
-        .slice(0, 5)
-        .map(a => books.find((b: Book) => b.id === a.bookId))
-        .filter(Boolean);
-    }
-    // If single activity object
-    const book = books.find((b: Book) => b.id === activity.bookId);
-    return book ? [book] : [];
+    const activities = readingActivity[currentUsername];
+    if (!activities || activities.length === 0) return [];
+    return activities
+      .sort((a, b) => new Date(b.lastRead).getTime() - new Date(a.lastRead).getTime())
+      .slice(0, 3)
+      .map(a => books.find((b: Book) => b.id === a.bookId))
+      .filter(Boolean);
   }, [books, readingActivity, currentUsername]);
 
   // Recommended: trending books matching user's top 2 favorite genres
@@ -2571,13 +2908,23 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
           { title: 'Recently Read', data: recentlyRead },
           { title: 'Recommended', data: recommendedBooks }
         ].map((section) => {
+          // Apply genre filter to section data if genres are selected
+          let sectionData = selectedGenres.length > 0
+            ? section.data.filter((b: any) => selectedGenres.some(g => (b.genres || []).includes(g)))
+            : section.data;
+          // Apply sort order
+          sectionData = [...sectionData].sort((a: any, b: any) => {
+            const dateA = new Date(a.publishedDate).getTime();
+            const dateB = new Date(b.publishedDate).getTime();
+            return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+          });
           const isExpanded = expandedSections.has(section.title);
-          const displayData = isExpanded ? section.data.slice(0, 20) : section.data.slice(0, 6);
+          const displayData = isExpanded ? sectionData.slice(0, 20) : sectionData.slice(0, 6);
           return (
           <section key={section.title} className="space-y-6">
             <div className="px-6 flex justify-between items-center">
               <h3 className="text-sm font-bold uppercase tracking-widest text-gray-900">{section.title}</h3>
-              {section.data.length > 6 && (
+              {sectionData.length > 6 && (
                 <button
                   onClick={() => setExpandedSections(prev => {
                     const next = new Set(prev);
@@ -2634,7 +2981,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
   );
 };
 
-const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock, onReport, relationships = [], currentUsername = '', readingActivity = {}, avatarConfig = null }: any) => {
+const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock, onReport, onMessage, relationships = [], currentUsername = '', readingActivity = {}, avatarConfig = null }: any) => {
   const [showMenu, setShowMenu] = useState(false);
   const [showBlockConfirm, setShowBlockConfirm] = useState(false);
   const isAdmiring = relationships.some((r: Relationship) => r.admirer === currentUsername && r.target === user.username);
@@ -2719,13 +3066,16 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
             <span className="material-icons-round text-6xl">person</span>
           </div>
         )}
-        <h1 className="text-2xl font-bold">{user.displayName}</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold">{user.displayName}</h1>
+          {user.isPremium && <span className="material-icons-round text-amber-500 text-lg">workspace_premium</span>}
+        </div>
         <p className="text-xs text-gray-300 font-bold uppercase tracking-widest mb-4">@{user.username}</p>
 
         {isMutual ? (
           <div className="flex items-center gap-2 mb-10">
             <div className={`w-2 h-2 rounded-full ${user.isOnline ? 'bg-green-500' : 'bg-gray-300'}`} />
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{user.isOnline ? `Online • ${readingActivity[user.username] ? 'Reading' : user.activity}` : 'Offline'}</span>
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{user.isOnline ? `Online • ${(readingActivity[user.username] || []).length > 0 ? 'Reading' : user.activity}` : 'Offline'}</span>
           </div>
         ) : (
           <div className="mb-10" />
@@ -2754,13 +3104,16 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
               {isAdmiring ? 'Admiring' : 'Admire'}
             </Button>
           )}
-          <Button variant="outline" className="flex-1"><span className="material-icons-round text-sm">chat</span> Message (coming soon) </Button>
+          {isMutual && (
+            <Button variant="outline" className="flex-1" onClick={onMessage}><span className="material-icons-round text-sm">chat</span> Message</Button>
+          )}
         </div>
 
         <section className="w-full space-y-6 px-4 mb-10">
-           {/* Currently Reading */}
-           {(() => {
-             const activity = readingActivity[user.username];
+           {/* Currently Reading — only visible to mutuals */}
+           {isMutual ? (() => {
+             const activities = readingActivity[user.username] || [];
+             const activity = activities.length > 0 ? activities.sort((a: any, b: any) => new Date(b.lastRead).getTime() - new Date(a.lastRead).getTime())[0] : null;
              const readingBook = activity ? books.find((b: Book) => b.id === activity.bookId) : null;
              if (readingBook) {
                const timeSince = (() => {
@@ -2806,7 +3159,15 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
                  </div>
                </>
              );
-           })()}
+           })() : (
+             <>
+               <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-2">Activity</h3>
+               <div className="bg-gray-50 p-6 rounded-[2rem] border border-gray-100 text-center">
+                 <span className="material-icons-round text-gray-200 text-2xl mb-2">lock</span>
+                 <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">Become mutuals to see activity</p>
+               </div>
+             </>
+           )}
 
           <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-2">Works</h3>
           <div className="flex gap-6 overflow-x-auto no-scrollbar pb-2">
@@ -2844,7 +3205,7 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
   );
 };
 
-const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack, onRead, onAuthorClick, isLiked, onLike, onSave, onReport, onShare, onAddToCart, onToggleFavorite, onUnpublish, onDelete, onMarkCompleted}: any) => {
+const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack, onRead, onAuthorClick, isLiked, onLike, onSave, isSaved, onReport, onShare, onAddToCart, onToggleFavorite, onUnpublish, onDelete, onMarkCompleted}: any) => {
   const isAuthor = currentUser.username === book.author.username;
 
   
@@ -2904,13 +3265,12 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
               <span className="material-icons-round text-gray-400">visibility_off</span>
               <span className="text-[8px] font-bold uppercase text-gray-400">Unpublish</span>
             </button>
-            <button 
-              onClick={() => onMarkCompleted(book.id)} 
-              disabled={book.isCompleted}
-              className={`flex flex-col items-center gap-2 p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:bg-gray-100 transition-colors ${book.isCompleted ? 'opacity-30' : ''}`}
+            <button
+              onClick={() => onMarkCompleted(book.id)}
+              className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition-colors ${book.isCompleted ? 'bg-green-50 border-green-200 hover:bg-green-100' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}
             >
-              <span className="material-icons-round text-accent">check_circle</span>
-              <span className="text-[8px] font-bold uppercase text-accent">Complete</span>
+              <span className={`material-icons-round ${book.isCompleted ? 'text-green-500' : 'text-accent'}`}>{book.isCompleted ? 'check_circle' : 'radio_button_unchecked'}</span>
+              <span className={`text-[8px] font-bold uppercase ${book.isCompleted ? 'text-green-500' : 'text-accent'}`}>{book.isCompleted ? 'Completed' : 'Complete'}</span>
             </button>
             <button 
               onClick={() => onDelete(book.id)} 
@@ -2931,8 +3291,13 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
               <Button variant="secondary" className="flex-1" onClick={onAddToCart}><span className="material-icons-round text-sm">add_shopping_cart</span> Add to Cart (${(book.price || 9.99).toFixed(2)})</Button>
             </div>
           )}
-          {/* Only show Save to Library if: not the author AND (book is free OR already owned) */}
-          {!isAuthor && (book.isFree || isOwned) && <Button variant="outline" className="w-full" onClick={() => onSave(book.id)}>Save to Library</Button>}
+          {/* Save/Remove from Library toggle — not the author AND (book is free OR already owned) */}
+          {!isAuthor && (book.isFree || isOwned) && (
+            <Button variant={isSaved ? "secondary" : "outline"} className="w-full" onClick={() => onSave(book.id)}>
+              <span className="material-icons-round text-sm mr-1">{isSaved ? 'bookmark_remove' : 'bookmark_add'}</span>
+              {isSaved ? 'Remove from Library' : 'Save to Library'}
+            </Button>
+          )}
           <Button variant="destructive" className="w-full bg-transparent border-none shadow-none" onClick={onReport}><span className="material-icons-round text-sm">report</span> Report</Button>
           </div>
         </div>
@@ -3149,6 +3514,31 @@ const renderFormattedContent = (content: string) => {
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 };
 
+// Ad banner shown at end of chapters (skipped for premium users)
+const ChapterAdBanner = ({ isPremium = false, inverted = false }: { isPremium?: boolean; inverted?: boolean }) => {
+  if (isPremium) return null;
+
+  // Placeholder ad slot — replace with Google AdSense or ad network script
+  return (
+    <div className={`my-10 p-6 rounded-3xl border-2 border-dashed text-center space-y-3 ${inverted ? 'border-gray-700 bg-gray-900/50' : 'border-gray-200 bg-gray-50'}`}>
+      <div className={`text-[8px] font-bold uppercase tracking-[0.3em] ${inverted ? 'text-gray-500' : 'text-gray-300'}`}>
+        Advertisement
+      </div>
+      <div className={`h-24 rounded-2xl flex items-center justify-center ${inverted ? 'bg-gray-800' : 'bg-gray-100'}`}>
+        {/* Google AdSense or ad network slot goes here */}
+        {/* <ins className="adsbygoogle" data-ad-client="ca-pub-XXXX" data-ad-slot="XXXX" data-ad-format="auto" /> */}
+        <div className={`text-center ${inverted ? 'text-gray-600' : 'text-gray-300'}`}>
+          <span className="material-icons-round text-2xl mb-1">campaign</span>
+          <p className="text-[9px] font-bold uppercase tracking-widest">Ad Space</p>
+        </div>
+      </div>
+      <p className={`text-[7px] font-bold uppercase tracking-widest ${inverted ? 'text-gray-600' : 'text-gray-300'}`}>
+        Support the author • <span className="text-accent cursor-pointer">Go Premium</span> to remove ads
+      </p>
+    </div>
+  );
+};
+
 const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, settings, setSettings, onBack, onComments, isLiked, onLike, onSave, onProgressUpdate, onShare }: any) => {
   const [showOptions, setShowOptions] = useState(false);
   const [currentChapterIdx, setCurrentChapterIdx] = useState(initialChapterIndex || 0);
@@ -3156,6 +3546,27 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
   const containerRef = useRef<HTMLDivElement>(null);
   const pageFlipRef = useRef<HTMLDivElement>(null);
  const touchStartRef = useRef(0);
+
+  // Prevent copy/paste and screenshots in reading view
+  useEffect(() => {
+    const preventCopy = (e: Event) => e.preventDefault();
+    const preventKeys = (e: KeyboardEvent) => {
+      // Block Print Screen, Ctrl+C, Ctrl+A, Ctrl+P, Cmd+C, Cmd+A, Cmd+P
+      if (e.key === 'PrintScreen' || ((e.ctrlKey || e.metaKey) && ['c','a','p','s'].includes(e.key.toLowerCase()))) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('copy', preventCopy);
+    document.addEventListener('cut', preventCopy);
+    document.addEventListener('keydown', preventKeys);
+    document.addEventListener('contextmenu', preventCopy);
+    return () => {
+      document.removeEventListener('copy', preventCopy);
+      document.removeEventListener('cut', preventCopy);
+      document.removeEventListener('keydown', preventKeys);
+      document.removeEventListener('contextmenu', preventCopy);
+    };
+  }, []);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (!settings.scrollMode) return;
@@ -3301,7 +3712,7 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
             onTouchEnd={handleTouchEnd}
             className="flex-1 overflow-y-auto no-scrollbar p-8 pt-10"
           >
-            <div className="max-w-2xl mx-auto space-y-10 mb-20 reader-content" style={{ fontSize: `${settings.fontSize}px` }}>
+            <div className="max-w-2xl mx-auto space-y-10 mb-20 reader-content select-none" style={{ fontSize: `${settings.fontSize}px`, WebkitUserSelect: 'none', userSelect: 'none' }}>
                 {!canAccessAll && (
                   <div className="p-4 mb-10 bg-accent/10 border border-accent/20 rounded-2xl text-center">
                     <p className="text-[10px] font-bold text-accent uppercase tracking-[0.2em]">Preview Mode</p>
@@ -3310,6 +3721,7 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
                 )}
                 <h1 className="text-3xl font-bold text-center mb-12">{currentChapter.title}</h1>
                 <div className="leading-relaxed whitespace-pre-line text-justify">{renderFormattedContent(currentChapter.content)}</div>
+                <ChapterAdBanner isPremium={currentUser?.isPremium} inverted={settings.inverted} />
             </div>
           </div>
       ) : (
@@ -3332,6 +3744,7 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
                   <div className="page-flip-content reader-content h-full p-8 pt-10" style={{ fontSize: `${settings.fontSize}px`, columnWidth: 'calc(100vw - 64px)', columnGap: '64px' }}>
                       <h1 className="text-3xl font-bold mb-12 pt-10">{currentChapter.title}</h1>
                       <div className="leading-relaxed whitespace-pre-line text-justify">{renderFormattedContent(currentChapter.content)}</div>
+                      <ChapterAdBanner isPremium={currentUser?.isPremium} inverted={settings.inverted} />
                   </div>
               </div>
           </div>
@@ -3349,7 +3762,7 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
                 <span className={`material-icons-round ${isLiked ? 'text-accent' : 'opacity-40'}`}>thumb_up</span>
                 <span className={`text-[8px] font-bold uppercase ${isLiked ? 'text-accent' : 'opacity-40'}`}>Like</span>
               </button>
-              <button onClick={onComments} className="flex flex-col items-center gap-3 transition-all active:scale-90">
+              <button onClick={() => onComments(currentChapterIdx)} className="flex flex-col items-center gap-3 transition-all active:scale-90">
                   <span className="material-icons-round opacity-40 active:text-accent">chat_bubble</span>
                   <span className="text-[8px] font-bold uppercase opacity-40">Comment</span>
               </button>
@@ -4049,24 +4462,54 @@ const AdminDashboard = ({
   );
 };
 
-const CommentsView = ({ comments, onBack, onPost, onReport, onLikeComment, currentUsername = '' }: any) => {
+const CommentsView = ({ comments, onBack, onPost, onReport, onLikeComment, currentUsername = '', chapters = [], initialChapterIndex = 0 }: any) => {
   const [newText, setNewText] = useState('');
+  const [activeChapter, setActiveChapter] = useState<number>(initialChapterIndex);
+
+  // Filter comments for the selected chapter
+  // Comments without chapterIndex (legacy) are treated as belonging to chapter 0
+  const filteredComments = chapters.length > 0
+    ? comments.filter((c: any) => (c.chapterIndex ?? 0) === activeChapter)
+    : comments;
 
   const handlePost = () => {
     if (newText.trim()) {
-        onPost(newText);
+        onPost(newText, chapters.length > 0 ? activeChapter : undefined);
         setNewText('');
     }
   };
 
   return (
     <div className="fixed inset-0 bg-white overflow-y-auto p-6 animate-in slide-in-from-bottom duration-500 z-[400]">
-      <header className="flex justify-between items-center mb-8 sticky top-0 bg-white py-2 z-10">
+      <header className="flex justify-between items-center mb-4 sticky top-0 bg-white py-2 z-10">
         <h1 className="text-xl font-bold">Comments</h1>
         <button onClick={onBack} className="w-10 h-10 text-gray-300 transition-transform active:scale-90"><span className="material-icons-round">close</span></button>
       </header>
+
+      {/* Chapter tabs — only show if book has multiple chapters */}
+      {chapters.length > 1 && (
+        <div className="flex overflow-x-auto no-scrollbar gap-2 mb-6 pb-2">
+          {chapters.map((ch: any, idx: number) => (
+            <button
+              key={idx}
+              onClick={() => setActiveChapter(idx)}
+              className={`flex-shrink-0 px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all ${
+                activeChapter === idx
+                  ? 'bg-accent text-white shadow-md'
+                  : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+              }`}
+            >
+              {ch.title || `Ch. ${idx + 1}`}
+              <span className="ml-1.5 text-[8px] opacity-70">
+                ({comments.filter((c: any) => (c.chapterIndex ?? 0) === idx).length})
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="space-y-6 pb-32">
-        {comments.map((c: any) => {
+        {filteredComments.map((c: any) => {
           const hasLiked = (c.likedBy || []).includes(currentUsername);
           return (
           <div key={c.id} className="p-5 bg-gray-50 rounded-3xl space-y-3 border border-gray-100 group relative">
@@ -4087,19 +4530,230 @@ const CommentsView = ({ comments, onBack, onPost, onReport, onLikeComment, curre
             </div>
           </div>
         );})}
-        {comments.length === 0 && (
-            <div className="text-center py-20 text-gray-200 font-bold uppercase tracking-widest text-[10px]">Be the first to comment</div>
+        {filteredComments.length === 0 && (
+            <div className="text-center py-20 text-gray-200 font-bold uppercase tracking-widest text-[10px]">
+              {chapters.length > 0 ? `No comments on this chapter yet` : 'Be the first to comment'}
+            </div>
         )}
       </div>
       <div className="fixed bottom-0 left-0 right-0 p-6 bg-white border-t border-gray-50 flex gap-4">
-        <input 
-            placeholder="Add a comment..." 
+        <input
+            placeholder={chapters.length > 0 ? `Comment on ${chapters[activeChapter]?.title || 'this chapter'}...` : "Add a comment..."}
             value={newText}
             onChange={(e) => setNewText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handlePost()}
-            className="flex-1 bg-gray-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner" 
+            className="flex-1 bg-gray-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner"
         />
         <button onClick={handlePost} className="w-14 h-14 bg-accent text-white rounded-2xl flex items-center justify-center shadow-lg transition-transform active:scale-90"><span className="material-icons-round">send</span></button>
+      </div>
+    </div>
+  );
+};
+
+// --- Chat Components ---
+
+const ChatListView = ({ currentUsername, relationships, registeredUsers, mutualsFallback, chatMessages, blockedUsers, onSelectChat, onBack, getAvatarItemPath, avatarConfigs = {} }: any) => {
+  // Get actual mutual usernames
+  const myAdmiring = relationships.filter((r: Relationship) => r.admirer === currentUsername).map((r: Relationship) => r.target);
+  const mutualUsernames = myAdmiring.filter((t: string) => relationships.some((r: Relationship) => r.admirer === t && r.target === currentUsername));
+
+  // Build mutual user objects
+  const mutuals = mutualUsernames.map((username: string) => {
+    return registeredUsers.find((u: any) => u.username === username) || mutualsFallback.find((u: any) => u.username === username);
+  }).filter(Boolean).filter((u: any) => !blockedUsers.has(u.username));
+
+  // Fall back to demo mutuals if none
+  const displayMutuals = mutuals.length > 0 ? mutuals : mutualsFallback.filter((u: any) => !blockedUsers.has(u.username));
+
+  // Get conversations with last message
+  const conversations = displayMutuals.map((mutual: any) => {
+    const msgs = chatMessages.filter((m: ChatMessage) =>
+      (m.from === currentUsername && m.to === mutual.username) ||
+      (m.from === mutual.username && m.to === currentUsername)
+    );
+    const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    const unread = msgs.filter((m: ChatMessage) => m.to === currentUsername && !m.read).length;
+    return { user: mutual, lastMessage: lastMsg, unreadCount: unread, messageCount: msgs.length };
+  }).sort((a: any, b: any) => {
+    // Sort by most recent message, then by unread
+    if (a.lastMessage && b.lastMessage) return new Date(b.lastMessage.timestamp).getTime() - new Date(a.lastMessage.timestamp).getTime();
+    if (a.lastMessage) return -1;
+    if (b.lastMessage) return 1;
+    return 0;
+  });
+
+  return (
+    <div className="fixed inset-0 bg-white overflow-y-auto no-scrollbar pb-32 animate-in slide-in-from-right duration-500 z-[400]">
+      <header className="p-6 flex items-center gap-4 sticky top-0 bg-white/80 backdrop-blur-xl z-50">
+        <button onClick={onBack} className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400">
+          <span className="material-icons-round">arrow_back</span>
+        </button>
+        <h1 className="text-xl font-bold flex-1">Messages</h1>
+      </header>
+
+      {conversations.length === 0 ? (
+        <div className="p-12 text-center">
+          <span className="material-icons-round text-5xl text-gray-200 mb-4">chat</span>
+          <p className="text-sm font-bold text-gray-300 uppercase tracking-widest">No mutuals yet</p>
+          <p className="text-xs text-gray-400 mt-2">Admire someone and have them admire you back to start chatting!</p>
+        </div>
+      ) : (
+        <div className="px-4">
+          {conversations.map((conv: any) => (
+            <button
+              key={conv.user.username}
+              onClick={() => onSelectChat(conv.user.username)}
+              className="w-full p-4 flex items-center gap-4 rounded-2xl transition-all active:scale-[0.98] hover:bg-gray-50 group"
+            >
+              <div className="relative flex-shrink-0">
+                <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 text-xl font-bold overflow-hidden">
+                  {avatarConfigs[conv.user.username] ? (
+                    <img src={getAvatarItemPath('body', avatarConfigs[conv.user.username].bodyId)} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="material-icons-round text-2xl">person</span>
+                  )}
+                </div>
+                <div className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white ${conv.user.isOnline ? 'bg-green-500' : 'bg-gray-300'}`} />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold truncate">{conv.user.displayName}</span>
+                  {conv.lastMessage && (
+                    <span className="text-[9px] text-gray-300 font-bold flex-shrink-0">
+                      {(() => {
+                        const diff = Date.now() - new Date(conv.lastMessage.timestamp).getTime();
+                        const mins = Math.floor(diff / 60000);
+                        if (mins < 1) return 'now';
+                        if (mins < 60) return `${mins}m`;
+                        const hrs = Math.floor(mins / 60);
+                        if (hrs < 24) return `${hrs}h`;
+                        return `${Math.floor(hrs / 24)}d`;
+                      })()}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 truncate mt-0.5">
+                  {conv.lastMessage
+                    ? `${conv.lastMessage.from === currentUsername ? 'You: ' : ''}${conv.lastMessage.text}`
+                    : 'Start a conversation'}
+                </p>
+              </div>
+              {conv.unreadCount > 0 && (
+                <span className="w-6 h-6 bg-accent text-white text-[10px] font-bold rounded-full flex items-center justify-center flex-shrink-0">
+                  {conv.unreadCount}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsername, targetUser, messages, onSend, onBack, getAvatarItemPath, avatarConfig }: any) => {
+  const [newMessage, setNewMessage] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSend = () => {
+    if (newMessage.trim()) {
+      onSend(newMessage);
+      setNewMessage('');
+    }
+  };
+
+  // Group messages by date
+  const groupedMessages = messages.reduce((groups: any, msg: ChatMessage) => {
+    const date = new Date(msg.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    if (!groups[date]) groups[date] = [];
+    groups[date].push(msg);
+    return groups;
+  }, {});
+
+  return (
+    <div className="fixed inset-0 bg-white flex flex-col animate-in slide-in-from-right duration-500 z-[400]">
+      {/* Header */}
+      <header className="p-4 flex items-center gap-3 bg-white border-b border-gray-100 z-10">
+        <button onClick={onBack} className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400">
+          <span className="material-icons-round">arrow_back</span>
+        </button>
+        <div className="relative">
+          <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center overflow-hidden">
+            {avatarConfig ? (
+              <img src={getAvatarItemPath('body', avatarConfig.bodyId)} className="w-full h-full object-cover" />
+            ) : (
+              <span className="material-icons-round text-gray-400">person</span>
+            )}
+          </div>
+          {targetUser?.isOnline && (
+            <div className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-white" />
+          )}
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-bold">{targetUser?.displayName || targetUsername}</p>
+          <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest">
+            {targetUser?.isOnline ? 'Online' : 'Offline'}
+          </p>
+        </div>
+      </header>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-1">
+        {messages.length === 0 && (
+          <div className="text-center py-20">
+            <span className="material-icons-round text-4xl text-gray-200 mb-2">chat_bubble_outline</span>
+            <p className="text-xs text-gray-300 font-bold uppercase tracking-widest">No messages yet</p>
+            <p className="text-[10px] text-gray-400 mt-1">Say hello!</p>
+          </div>
+        )}
+        {Object.entries(groupedMessages).map(([date, msgs]: [string, any]) => (
+          <div key={date}>
+            <div className="text-center my-4">
+              <span className="text-[9px] font-bold text-gray-300 uppercase tracking-widest bg-gray-50 px-3 py-1 rounded-full">{date}</span>
+            </div>
+            {msgs.map((msg: ChatMessage) => {
+              const isMine = msg.from === currentUsername;
+              return (
+                <div key={msg.id} className={`flex mb-2 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[75%] px-4 py-3 rounded-2xl ${
+                    isMine
+                      ? 'bg-accent text-white rounded-br-md'
+                      : 'bg-gray-100 text-black rounded-bl-md'
+                  }`}>
+                    <p className="text-sm leading-relaxed">{msg.text}</p>
+                    <p className={`text-[8px] mt-1 ${isMine ? 'text-white/60' : 'text-gray-400'}`}>
+                      {new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      <div className="p-4 bg-white border-t border-gray-100 flex gap-3">
+        <input
+          placeholder="Type a message..."
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+          className="flex-1 bg-gray-50 rounded-2xl px-5 py-4 text-sm outline-none shadow-inner"
+        />
+        <button
+          onClick={handleSend}
+          disabled={!newMessage.trim()}
+          className="w-14 h-14 bg-accent text-white rounded-2xl flex items-center justify-center shadow-lg transition-transform active:scale-90 disabled:opacity-40"
+        >
+          <span className="material-icons-round">send</span>
+        </button>
       </div>
     </div>
   );
@@ -4220,11 +4874,20 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack }: 
           <button onMouseDown={(e) => { e.preventDefault(); execAction('justifyCenter'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Align Center"><span className="material-icons-round text-sm">format_align_center</span></button>
           <button onMouseDown={(e) => { e.preventDefault(); execAction('justifyRight'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Align Right"><span className="material-icons-round text-sm">format_align_right</span></button>
           <div className="w-px h-6 bg-gray-200 mx-1 self-center" />
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('insertUnorderedList'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="not fully functionally yet sry"><span className="material-icons-round text-sm">format_list_bulleted</span></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execAction('insertUnorderedList'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Bullet List"><span className="material-icons-round text-sm">format_list_bulleted</span></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execAction('insertOrderedList'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Numbered List"><span className="material-icons-round text-sm">format_list_numbered</span></button>
         </div>
 
         <div className="relative min-h-[400px]">
-          <div ref={editorRef} contentEditable spellCheck="true" className="w-full min-h-[400px] bg-transparent border-none outline-none text-base leading-relaxed placeholder:text-gray-200 resize-none no-scrollbar focus:ring-0 rich-editor" onInput={updateWordCount} />
+          {selectedBook && (selectedBook.isCompleted || selectedBook.wasCompleted) ? (
+            <div className="w-full min-h-[400px] flex flex-col items-center justify-center text-center p-8 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+              <span className="material-icons-round text-4xl text-gray-300 mb-3">lock</span>
+              <p className="text-sm font-bold text-gray-400">This book has been completed</p>
+              <p className="text-xs text-gray-300 mt-1">Completed works cannot be edited</p>
+            </div>
+          ) : (
+            <div ref={editorRef} contentEditable spellCheck="true" className="w-full min-h-[400px] bg-transparent border-none outline-none text-base leading-relaxed placeholder:text-gray-200 resize-none no-scrollbar focus:ring-0 rich-editor" onInput={updateWordCount} />
+          )}
         </div>
       </div>
 
