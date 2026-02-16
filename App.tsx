@@ -7,6 +7,9 @@ import { Html, Environment, PerspectiveCamera, useGLTF } from '@react-three/drei
  * MainWrld- Full Integrated Creator & Reader Platform
  */
 
+// Base path for assets - uses Vite's base URL config for GitHub Pages
+const BASE = import.meta.env.BASE_URL;
+
 // --- Stripe Configuration ---
 // Replace with your Stripe publishable key (use pk_test_ for testing, pk_live_ for production)
 const STRIPE_PUBLISHABLE_KEY = 'pk_test_51SxGPW2Urthc1FwfeRDmVhtNVchR7iiZATzRQJcyRjzNLA3ME99cQXQbbgP0ngtnVxAQCckZYcFKAi2vld0w4YR900P0pvdCEO';
@@ -234,67 +237,67 @@ const getFacePosition = (faceId: string) => FACE_POSITIONS[faceId] || { width: '
 
 const AVATAR_ITEMS: AvatarItem[] = [
   // Bodies - all free
-  { id: 'A1', label: 'Tone 1', path: '/assets/avatar/body/female/A1.png', category: 'body', gender: 'female', cost: 0 },
-  { id: 'A2', label: 'Tone 2', path: '/assets/avatar/body/female/A2.png', category: 'body', gender: 'female', cost: 0 },
-  { id: 'A3', label: 'Tone 3', path: '/assets/avatar/body/female/A3.png', category: 'body', gender: 'female', cost: 0 },
-  { id: 'A4', label: 'Tone 4', path: '/assets/avatar/body/female/A4.png', category: 'body', gender: 'female', cost: 0 },
-  { id: 'A5', label: 'Tone 5', path: '/assets/avatar/body/female/A5.png', category: 'body', gender: 'female', cost: 0 },
-  { id: 'A6', label: 'Tone 6', path: '/assets/avatar/body/female/A6.png', category: 'body', gender: 'female', cost: 0 },
-  { id: 'A7', label: 'Tone 7', path: '/assets/avatar/body/female/A7.png', category: 'body', gender: 'female', cost: 0 },
-  { id: 'B1', label: 'Tone 1', path: '/assets/avatar/body/male/B1.png', category: 'body', gender: 'male', cost: 0 },
-  { id: 'B2', label: 'Tone 2', path: '/assets/avatar/body/male/B2.png', category: 'body', gender: 'male', cost: 0 },
-  { id: 'B3', label: 'Tone 3', path: '/assets/avatar/body/male/B3.png', category: 'body', gender: 'male', cost: 0 },
-  { id: 'B4', label: 'Tone 4', path: '/assets/avatar/body/male/B4.png', category: 'body', gender: 'male', cost: 0 },
-  { id: 'B5', label: 'Tone 5', path: '/assets/avatar/body/male/B5.png', category: 'body', gender: 'male', cost: 0 },
-  { id: 'B6', label: 'Tone 6', path: '/assets/avatar/body/male/B6.png', category: 'body', gender: 'male', cost: 0 },
-  { id: 'B7', label: 'Tone 7', path: '/assets/avatar/body/male/B7.png', category: 'body', gender: 'male', cost: 0 },
+  { id: 'A1', label: 'Tone 1', path: `${BASE}assets/avatar/body/female/A1.png`, category: 'body', gender: 'female', cost: 0 },
+  { id: 'A2', label: 'Tone 2', path: `${BASE}assets/avatar/body/female/A2.png`, category: 'body', gender: 'female', cost: 0 },
+  { id: 'A3', label: 'Tone 3', path: `${BASE}assets/avatar/body/female/A3.png`, category: 'body', gender: 'female', cost: 0 },
+  { id: 'A4', label: 'Tone 4', path: `${BASE}assets/avatar/body/female/A4.png`, category: 'body', gender: 'female', cost: 0 },
+  { id: 'A5', label: 'Tone 5', path: `${BASE}assets/avatar/body/female/A5.png`, category: 'body', gender: 'female', cost: 0 },
+  { id: 'A6', label: 'Tone 6', path: `${BASE}assets/avatar/body/female/A6.png`, category: 'body', gender: 'female', cost: 0 },
+  { id: 'A7', label: 'Tone 7', path: `${BASE}assets/avatar/body/female/A7.png`, category: 'body', gender: 'female', cost: 0 },
+  { id: 'B1', label: 'Tone 1', path: `${BASE}assets/avatar/body/male/B1.png`, category: 'body', gender: 'male', cost: 0 },
+  { id: 'B2', label: 'Tone 2', path: `${BASE}assets/avatar/body/male/B2.png`, category: 'body', gender: 'male', cost: 0 },
+  { id: 'B3', label: 'Tone 3', path: `${BASE}assets/avatar/body/male/B3.png`, category: 'body', gender: 'male', cost: 0 },
+  { id: 'B4', label: 'Tone 4', path: `${BASE}assets/avatar/body/male/B4.png`, category: 'body', gender: 'male', cost: 0 },
+  { id: 'B5', label: 'Tone 5', path: `${BASE}assets/avatar/body/male/B5.png`, category: 'body', gender: 'male', cost: 0 },
+  { id: 'B6', label: 'Tone 6', path: `${BASE}assets/avatar/body/male/B6.png`, category: 'body', gender: 'male', cost: 0 },
+  { id: 'B7', label: 'Tone 7', path: `${BASE}assets/avatar/body/male/B7.png`, category: 'body', gender: 'male', cost: 0 },
   // No face option
   { id: 'no_face', label: 'No Face', path: '', category: 'face', gender: 'any', cost: 0 },
   // Female faces
-  { id: 'W_Eye_1', label: 'Face 1', path: '/assets/avatar/face/W_Eye_1.png', category: 'face', gender: 'female', cost: 0 },
-  { id: 'W_Eye_2', label: 'Face 2', path: '/assets/avatar/face/W_Eye_2.png', category: 'face', gender: 'female', cost: 0 },
-  { id: 'W_Eye_3', label: 'Face 3', path: '/assets/avatar/face/W_Eye_3.png', category: 'face', gender: 'female', cost: 0 },
-  { id: 'W_Eye_3_v1', label: 'Face 3 Alt', path: '/assets/avatar/face/W_Eye_3_v1.png', category: 'face', gender: 'female', cost: 0 },
+  { id: 'W_Eye_1', label: 'Face 1', path: `${BASE}assets/avatar/face/W_Eye_1.png`, category: 'face', gender: 'female', cost: 0 },
+  { id: 'W_Eye_2', label: 'Face 2', path: `${BASE}assets/avatar/face/W_Eye_2.png`, category: 'face', gender: 'female', cost: 0 },
+  { id: 'W_Eye_3', label: 'Face 3', path: `${BASE}assets/avatar/face/W_Eye_3.png`, category: 'face', gender: 'female', cost: 0 },
+  { id: 'W_Eye_3_v1', label: 'Face 3 Alt', path: `${BASE}assets/avatar/face/W_Eye_3_v1.png`, category: 'face', gender: 'female', cost: 0 },
   // Male faces
-  { id: 'M_Eye_1', label: 'Face 1', path: '/assets/avatar/face/M_Eye_1.png', category: 'face', gender: 'male', cost: 0 },
-  { id: 'M_Eye_1_v1', label: 'Face 1 Alt', path: '/assets/avatar/face/M_Eye_1_v1.png', category: 'face', gender: 'male', cost: 0 },
-  { id: 'M_Eye_1_v2', label: 'Face 1 Alt 2', path: '/assets/avatar/face/M_Eye_1_v2.png', category: 'face', gender: 'male', cost: 0 },
-  { id: 'M_Eye_2', label: 'Face 2', path: '/assets/avatar/face/M_Eye_2.png', category: 'face', gender: 'male', cost: 0 },
-  { id: 'M_Eye_2_v1', label: 'Face 2 Alt', path: '/assets/avatar/face/M_Eye_2_v1.png', category: 'face', gender: 'male', cost: 0 },
-  { id: 'M_Eye_2_v2', label: 'Face 2 Alt 2', path: '/assets/avatar/face/M_Eye_2_v2.png', category: 'face', gender: 'male', cost: 0 },
-  { id: 'M_Eye_3', label: 'Face 3', path: '/assets/avatar/face/M_Eye_3.png', category: 'face', gender: 'male', cost: 0 },
-  { id: 'M_Eye_3_v1', label: 'Face 3 Alt', path: '/assets/avatar/face/M_Eye_3_v1.png', category: 'face', gender: 'male', cost: 0 },
-  { id: 'M_Eye_3_v2', label: 'Face 3 Alt 2', path: '/assets/avatar/face/M_Eye_3_v2.png', category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_1', label: 'Face 1', path: `${BASE}assets/avatar/face/M_Eye_1.png`, category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_1_v1', label: 'Face 1 Alt', path: `${BASE}assets/avatar/face/M_Eye_1_v1.png`, category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_1_v2', label: 'Face 1 Alt 2', path: `${BASE}assets/avatar/face/M_Eye_1_v2.png`, category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_2', label: 'Face 2', path: `${BASE}assets/avatar/face/M_Eye_2.png`, category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_2_v1', label: 'Face 2 Alt', path: `${BASE}assets/avatar/face/M_Eye_2_v1.png`, category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_2_v2', label: 'Face 2 Alt 2', path: `${BASE}assets/avatar/face/M_Eye_2_v2.png`, category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_3', label: 'Face 3', path: `${BASE}assets/avatar/face/M_Eye_3.png`, category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_3_v1', label: 'Face 3 Alt', path: `${BASE}assets/avatar/face/M_Eye_3_v1.png`, category: 'face', gender: 'male', cost: 0 },
+  { id: 'M_Eye_3_v2', label: 'Face 3 Alt 2', path: `${BASE}assets/avatar/face/M_Eye_3_v2.png`, category: 'face', gender: 'male', cost: 0 },
   // No hair option
   { id: 'none', label: 'No Hair', path: '', category: 'hair', gender: 'any', cost: 0 },
   // Female hair
-  { id: 'W_Hair_1', label: 'Hair 1', path: '/assets/avatar/hair/female/W_Hair_1.png', category: 'hair', gender: 'female', cost: 0 },
-  { id: 'W_Hair_2', label: 'Hair 2', path: '/assets/avatar/hair/female/W_Hair_2.png', category: 'hair', gender: 'female', cost: 0 },
-  { id: 'W_Hair_2_v1', label: 'Hair 2 Alt', path: '/assets/avatar/hair/female/W_Hair_2_v1.png', category: 'hair', gender: 'female', cost: 0 },
-  { id: 'W_Hair_3', label: 'Hair 3', path: '/assets/avatar/hair/female/W_Hair_3.png', category: 'hair', gender: 'female', cost: 0 },
-  { id: 'W_Hair_4', label: 'Hair 4', path: '/assets/avatar/hair/female/W_Hair_4.png', category: 'hair', gender: 'female', cost: 0 },
-  { id: 'W_Hair_4_v1', label: 'Hair 4 Alt', path: '/assets/avatar/hair/female/W_Hair_4_v1.png', category: 'hair', gender: 'female', cost: 0 },
-  { id: 'W_Hair_5', label: 'Hair 5', path: '/assets/avatar/hair/female/W_Hair_5.png', category: 'hair', gender: 'female', cost: 0 },
-  { id: 'W_Hair_5_v1', label: 'Hair 5 Alt', path: '/assets/avatar/hair/female/W_Hair_5_v1.png', category: 'hair', gender: 'female', cost: 0 },
+  { id: 'W_Hair_1', label: 'Hair 1', path: `${BASE}assets/avatar/hair/female/W_Hair_1.png`, category: 'hair', gender: 'female', cost: 0 },
+  { id: 'W_Hair_2', label: 'Hair 2', path: `${BASE}assets/avatar/hair/female/W_Hair_2.png`, category: 'hair', gender: 'female', cost: 0 },
+  { id: 'W_Hair_2_v1', label: 'Hair 2 Alt', path: `${BASE}assets/avatar/hair/female/W_Hair_2_v1.png`, category: 'hair', gender: 'female', cost: 0 },
+  { id: 'W_Hair_3', label: 'Hair 3', path: `${BASE}assets/avatar/hair/female/W_Hair_3.png`, category: 'hair', gender: 'female', cost: 0 },
+  { id: 'W_Hair_4', label: 'Hair 4', path: `${BASE}assets/avatar/hair/female/W_Hair_4.png`, category: 'hair', gender: 'female', cost: 0 },
+  { id: 'W_Hair_4_v1', label: 'Hair 4 Alt', path: `${BASE}assets/avatar/hair/female/W_Hair_4_v1.png`, category: 'hair', gender: 'female', cost: 0 },
+  { id: 'W_Hair_5', label: 'Hair 5', path: `${BASE}assets/avatar/hair/female/W_Hair_5.png`, category: 'hair', gender: 'female', cost: 0 },
+  { id: 'W_Hair_5_v1', label: 'Hair 5 Alt', path: `${BASE}assets/avatar/hair/female/W_Hair_5_v1.png`, category: 'hair', gender: 'female', cost: 0 },
   // Male hair
-  { id: 'M_Hair_1', label: 'Hair 1', path: '/assets/avatar/hair/male/M_Hair_1.png', category: 'hair', gender: 'male', cost: 0 },
-  { id: 'M_Hair_2', label: 'Hair 2', path: '/assets/avatar/hair/male/M_Hair_2.png', category: 'hair', gender: 'male', cost: 0 },
-  { id: 'M_Hair_3', label: 'Hair 3', path: '/assets/avatar/hair/male/M_Hair_3.png', category: 'hair', gender: 'male', cost: 0 },
-  { id: 'M_Hair_4', label: 'Hair 4', path: '/assets/avatar/hair/male/M_Hair_4.png', category: 'hair', gender: 'male', cost: 0 },
-  { id: 'M_Hair_4_v1', label: 'Hair 4 Alt', path: '/assets/avatar/hair/male/M_Hair_4_v1.png', category: 'hair', gender: 'male', cost: 0 },
-  { id: 'M_Hair_5', label: 'Hair 5', path: '/assets/avatar/hair/male/M_Hair_5.png', category: 'hair', gender: 'male', cost: 0 },
-  { id: 'M_Hair_5_v1', label: 'Hair 5 Alt', path: '/assets/avatar/hair/male/M_Hair_5_v1.png', category: 'hair', gender: 'male', cost: 0 },
+  { id: 'M_Hair_1', label: 'Hair 1', path: `${BASE}assets/avatar/hair/male/M_Hair_1.png`, category: 'hair', gender: 'male', cost: 0 },
+  { id: 'M_Hair_2', label: 'Hair 2', path: `${BASE}assets/avatar/hair/male/M_Hair_2.png`, category: 'hair', gender: 'male', cost: 0 },
+  { id: 'M_Hair_3', label: 'Hair 3', path: `${BASE}assets/avatar/hair/male/M_Hair_3.png`, category: 'hair', gender: 'male', cost: 0 },
+  { id: 'M_Hair_4', label: 'Hair 4', path: `${BASE}assets/avatar/hair/male/M_Hair_4.png`, category: 'hair', gender: 'male', cost: 0 },
+  { id: 'M_Hair_4_v1', label: 'Hair 4 Alt', path: `${BASE}assets/avatar/hair/male/M_Hair_4_v1.png`, category: 'hair', gender: 'male', cost: 0 },
+  { id: 'M_Hair_5', label: 'Hair 5', path: `${BASE}assets/avatar/hair/male/M_Hair_5.png`, category: 'hair', gender: 'male', cost: 0 },
+  { id: 'M_Hair_5_v1', label: 'Hair 5 Alt', path: `${BASE}assets/avatar/hair/male/M_Hair_5_v1.png`, category: 'hair', gender: 'male', cost: 0 },
   // Female outfits
-  { id: 'D1', label: 'Outfit 1', path: '/assets/avatar/outfit/female/D1.png', category: 'outfit', gender: 'female', cost: 0 },
-  { id: 'D2', label: 'Outfit 2', path: '/assets/avatar/outfit/female/D2.png', category: 'outfit', gender: 'female', cost: 0 },
-  { id: 'D3', label: 'Outfit 3', path: '/assets/avatar/outfit/female/D3.png', category: 'outfit', gender: 'female', cost: 0 },
-  { id: 'D4', label: 'Outfit 4', path: '/assets/avatar/outfit/female/D4.png', category: 'outfit', gender: 'female', cost: 0 },
-  { id: 'D5', label: 'Outfit 5', path: '/assets/avatar/outfit/female/D5.png', category: 'outfit', gender: 'female', cost: 0 },
+  { id: 'D1', label: 'Outfit 1', path: `${BASE}assets/avatar/outfit/female/D1.png`, category: 'outfit', gender: 'female', cost: 0 },
+  { id: 'D2', label: 'Outfit 2', path: `${BASE}assets/avatar/outfit/female/D2.png`, category: 'outfit', gender: 'female', cost: 0 },
+  { id: 'D3', label: 'Outfit 3', path: `${BASE}assets/avatar/outfit/female/D3.png`, category: 'outfit', gender: 'female', cost: 0 },
+  { id: 'D4', label: 'Outfit 4', path: `${BASE}assets/avatar/outfit/female/D4.png`, category: 'outfit', gender: 'female', cost: 0 },
+  { id: 'D5', label: 'Outfit 5', path: `${BASE}assets/avatar/outfit/female/D5.png`, category: 'outfit', gender: 'female', cost: 0 },
   // Male outfits
-  { id: 'E1', label: 'Outfit 1', path: '/assets/avatar/outfit/male/E1.png', category: 'outfit', gender: 'male', cost: 0 },
-  { id: 'E2', label: 'Outfit 2', path: '/assets/avatar/outfit/male/E2.png', category: 'outfit', gender: 'male', cost: 0 },
-  { id: 'E3', label: 'Outfit 3', path: '/assets/avatar/outfit/male/E3.png', category: 'outfit', gender: 'male', cost: 0 },
-  { id: 'E4', label: 'Outfit 4', path: '/assets/avatar/outfit/male/E4.png', category: 'outfit', gender: 'male', cost: 0 },
+  { id: 'E1', label: 'Outfit 1', path: `${BASE}assets/avatar/outfit/male/E1.png`, category: 'outfit', gender: 'male', cost: 0 },
+  { id: 'E2', label: 'Outfit 2', path: `${BASE}assets/avatar/outfit/male/E2.png`, category: 'outfit', gender: 'male', cost: 0 },
+  { id: 'E3', label: 'Outfit 3', path: `${BASE}assets/avatar/outfit/male/E3.png`, category: 'outfit', gender: 'male', cost: 0 },
+  { id: 'E4', label: 'Outfit 4', path: `${BASE}assets/avatar/outfit/male/E4.png`, category: 'outfit', gender: 'male', cost: 0 },
 ];
 
 const getAvatarItemPath = (category: AvatarCategory, id: string): string => {
@@ -462,7 +465,7 @@ const Input = ({ label, type = 'text', value, onChange, placeholder, description
 // --- 3D Components ---
 
 const AvatarModel: React.FC<{ name: string; activity: string; onClick?: () => void; online: boolean; isPlayer?: boolean; skinColor?: string; }> = ({ name, activity, onClick, online, isPlayer, skinColor }) => {
-  const { scene } = useGLTF('/avatar.glb');
+  const { scene } = useGLTF(`${BASE}avatar.glb`);
   const targetColor = isPlayer ? (skinColor || ACCENT_COLOR) : '#334155';
 
   const clonedScene = useMemo(() => {
@@ -1551,15 +1554,15 @@ const handleSpinWheel = () => {
       case 'splash':
         return (
           <div className="fixed inset-0 bg-white flex flex-col items-center justify-center animate-in fade-in duration-700">
-            <img src="/logo.png" alt="MainWrld" className="w-24 h-24 mb-4" />
-            <img src="/wordlogo.png" alt="MainWrld" className="h-8" />
+            <img src={`${BASE}logo.png`} alt="MainWrld" className="w-24 h-24 mb-4" />
+            <img src={`${BASE}wordlogo.png`} alt="MainWrld" className="h-8" />
           </div>
         );
 
       case 'login':
         return (
           <div className="fixed inset-0 bg-white p-8 flex flex-col items-center justify-center animate-in fade-in duration-500">
-            <img src="/logo.png" alt="MainWrld" className="w-20 h-20 mb-4" />
+            <img src={`${BASE}logo.png`} alt="MainWrld" className="w-20 h-20 mb-4" />
             <h1 className="text-3xl font-display mb-12">Log In</h1>
             <div className="w-full max-w-sm space-y-4 mb-4">
               <Input label="Username" placeholder="Enter username..." value={loginForm.username} onChange={(val: string) => setLoginForm({...loginForm, username: val})} />
@@ -1643,7 +1646,7 @@ const handleSpinWheel = () => {
               </Suspense>
             </Canvas>
             <div className="absolute top-3 left-6 pointer-events-none flex justify-between w-[calc(100%-48px)] items-start">
-              <div><img src="/wordlogo.png" alt="MainWrld" className="w-[240px] drop-shadow-md" /></div>
+              <div><img src={`${BASE}wordlogo.png`} alt="MainWrld" className="w-[240px] drop-shadow-md" /></div>
               <div className="flex flex-col gap-4 pointer-events-auto">
                 <button onClick={() => setView('notifications')} className="w-14 h-14 bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl flex items-center justify-center text-gray-500 border border-white relative transition-all active:scale-90"><span className="material-icons-round">notifications</span></button>
                 <button onClick={() => setView('daily-rewards')} className="w-14 h-14 bg-accent/90 backdrop-blur-xl rounded-2xl shadow-xl flex flex-col items-center justify-center text-white border border-white relative transition-all active:scale-90"><span className="material-icons-round">card_giftcard</span><span className="text-[7px] font-black uppercase leading-tight">Points</span></button>
@@ -4403,13 +4406,13 @@ const CustomizationView = ({ user, setUser, onBack, avatarConfig, setAvatarConfi
         <div className="flex-1 flex items-center justify-center gap-8 p-8">
           <button onClick={() => handleGenderSelect('female')} className="flex flex-col items-center gap-4 p-6 rounded-3xl border-2 border-gray-200 hover:border-accent hover:bg-accent/5 transition-all active:scale-95 w-56">
             <div className="w-40 h-56 rounded-2xl overflow-hidden bg-gray-50">
-              <img src="/assets/avatar/body/female/A4.png" alt="Female" className="w-full h-full object-contain" />
+              <img src={`${BASE}assets/avatar/body/female/A4.png`} alt="Female" className="w-full h-full object-contain" />
             </div>
             <span className="text-sm font-bold uppercase tracking-widest"></span>
           </button>
           <button onClick={() => handleGenderSelect('male')} className="flex flex-col items-center gap-4 p-6 rounded-3xl border-2 border-gray-200 hover:border-accent hover:bg-accent/5 transition-all active:scale-95 w-56">
             <div className="w-40 h-56 rounded-2xl overflow-hidden bg-gray-50">
-              <img src="/assets/avatar/body/male/B4.png" alt="Male" className="w-full h-full object-contain" />
+              <img src={`${BASE}assets/avatar/body/male/B4.png`} alt="Male" className="w-full h-full object-contain" />
             </div>
             <span className="text-sm font-bold uppercase tracking-widest"></span>
           </button>
@@ -4599,6 +4602,6 @@ const CustomizationView = ({ user, setUser, onBack, avatarConfig, setAvatarConfi
 
 
 // Preload the GLB model
-useGLTF.preload('/avatar.glb');
+useGLTF.preload(`${BASE}avatar.glb`);
 
 export default App;
