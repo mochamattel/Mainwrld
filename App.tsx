@@ -120,6 +120,7 @@ interface NotificationItem {
   timestamp: Date;
   recipient: string;
   sender?: string;
+  read?: boolean;
 }
 
 interface ChatMessage {
@@ -687,6 +688,7 @@ const App: React.FC = () => {
   const [readerSettings, setReaderSettings] = useState({ fontSize: 13, inverted: false, scrollMode: true });
 
   const [likedBooks, setLikedBooks] = useState<Set<string>>(new Set());
+  const likedBooksInteracted = useRef(false);
   const [signUpForm, setSignUpForm] = useState({ email: '', birthDate: '', displayName: '', username: '', password: '' });
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [authError, setAuthError] = useState<string | null>(null);
@@ -947,9 +949,52 @@ const App: React.FC = () => {
     localStorage.setItem('mainwrld_reports', JSON.stringify(reports));
   }, [reports]);
 
+  // Load likedBooks from localStorage whenever username changes
+  useEffect(() => {
+    try {
+      const key = `mainwrld_liked_books_${user.username}`;
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        setLikedBooks(new Set(JSON.parse(saved)));
+      } else {
+        setLikedBooks(new Set());
+      }
+      // Reset interaction flag on user change so we don't save stale data
+      likedBooksInteracted.current = false;
+    } catch { /* ignore */ }
+  }, [user.username]);
+
+  // Save likedBooks to localStorage only after user has actually liked/unliked
+  useEffect(() => {
+    if (likedBooksInteracted.current) {
+      localStorage.setItem(`mainwrld_liked_books_${user.username}`, JSON.stringify(Array.from(likedBooks)));
+    }
+  }, [likedBooks]);
+
   useEffect(() => {
     localStorage.setItem('mainwrld_chat_messages', JSON.stringify(chatMessages));
   }, [chatMessages]);
+
+  // Message expiry: remove messages older than 1 year (premium users keep messages forever)
+  useEffect(() => {
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const expired = chatMessages.filter(m => {
+      const msgDate = new Date(m.timestamp);
+      if (msgDate >= oneYearAgo) return false; // Not expired
+      // Keep if either sender or receiver is premium
+      const sender = registeredUsers.find(u => u.username === m.from);
+      const receiver = registeredUsers.find(u => u.username === m.to);
+      if ((sender?.isPremium) || (receiver?.isPremium)) return false;
+      if (m.from === user.username && user.isPremium) return false;
+      if (m.to === user.username && user.isPremium) return false;
+      return true; // Expired
+    });
+    if (expired.length > 0) {
+      const expiredIds = new Set(expired.map(m => m.id));
+      setChatMessages(prev => prev.filter(m => !expiredIds.has(m.id)));
+    }
+  }, []); // Run once on mount
 
   // Mark messages as read when viewing a chat conversation
   useEffect(() => {
@@ -1226,27 +1271,49 @@ const App: React.FC = () => {
   };
 
   const handleLike = (bookId: string) => {
+    likedBooksInteracted.current = true;
     const isLiked = likedBooks.has(bookId);
     if (isLiked) {
-      likedBooks.delete(bookId);
+      const next = new Set(likedBooks);
+      next.delete(bookId);
+      setLikedBooks(next);
       setBooks(prev => prev.map(b => b.id === bookId ? { ...b, likes: b.likes - 1 } : b));
     } else {
-      likedBooks.add(bookId);
+      const next = new Set(likedBooks);
+      next.add(bookId);
+      setLikedBooks(next);
       const targetBook = books.find(b => b.id === bookId);
       if (targetBook) {
         setBooks(prev => prev.map(b => b.id === bookId ? { ...b, likes: b.likes + 1 } : b));
         addNotification('Book Liked', `${user.displayName} liked your book "${targetBook.title}"`, 'favorite', targetBook.author.username);
       }
     }
-    setLikedBooks(new Set(likedBooks));
   };
 
   const handleAdmire = (targetUser: User) => {
     const alreadyAdmiring = relationships.some(r => r.admirer === user.username && r.target === targetUser.username);
 
     if (alreadyAdmiring) {
-      // Un-admire (toggle off)
-      setRelationships(prev => prev.filter(r => !(r.admirer === user.username && r.target === targetUser.username)));
+      // Check if they are mutuals before un-admiring
+      const isMutual = relationships.some(r => r.admirer === targetUser.username && r.target === user.username);
+      if (isMutual) {
+        showConfirm({
+          title: 'Stop being mutuals?',
+          message: `You and ${targetUser.displayName} will no longer be mutuals. Chat will be disabled but previous messages will be saved as read-only.`,
+          confirmLabel: 'Yes, stop admiring',
+          cancelLabel: 'Cancel',
+          icon: 'people_outline',
+          onConfirm: () => {
+            setRelationships(prev => prev.filter(r => !(r.admirer === user.username && r.target === targetUser.username)));
+            showToast('You are no longer mutuals', 'people_outline');
+          },
+          onCancel: () => {}
+        });
+      } else {
+        // Not mutuals, just un-admire silently
+        setRelationships(prev => prev.filter(r => !(r.admirer === user.username && r.target === targetUser.username)));
+        showToast('Stopped admiring', 'person_remove');
+      }
       return;
     }
 
@@ -1476,6 +1543,8 @@ const handleSpinWheel = () => {
     }
     if (currentPublishingId) {
       // Update existing book - preserve existing metadata when just adding/updating chapters
+      const existingBook = books.find(b => b.id === currentPublishingId);
+      const oldChapterCount = existingBook?.chapters?.length || 0;
       setBooks(prev => prev.map(b => {
         if (b.id === currentPublishingId) {
           const updatedChapters = [...(b.chapters || [])];
@@ -1506,6 +1575,16 @@ const handleSpinWheel = () => {
         }
         return b;
       }));
+
+      // Notify users who have this book in their library about the new chapter
+      if (existingBook && (currentPublishingChapterIndex === null || (existingBook.chapters && currentPublishingChapterIndex >= existingBook.chapters.length))) {
+        // A new chapter was added — notify all users who have this book saved
+        Object.entries(userBookData).forEach(([username, data]: [string, any]) => {
+          if (username !== user.username && data.ownedBookIds?.includes(currentPublishingId)) {
+            addNotification('New Chapter', `"${existingBook.title}" has a new chapter!`, 'menu_book', username, user.username);
+          }
+        });
+      }
     } else {
       // New book
       const book: Book = {
@@ -1528,9 +1607,20 @@ const handleSpinWheel = () => {
         isDraft: false,
         commentsEnabled: data.commentsEnabled,
         chapters: [{ title: 'Chapter 1', content: currentPublishingContent }],
-        price: 9.99
+        isFree: true,
+        price: 0
       };
       setBooks(prev => [...prev, book]);
+
+      // Notify admirers and mutuals about the new book
+      const myAdmirers = relationships.filter(r => r.target === user.username).map(r => r.admirer);
+      const myAdmiring = relationships.filter(r => r.admirer === user.username).map(r => r.target);
+      const notifyUsers = new Set([...myAdmirers, ...myAdmiring]);
+      notifyUsers.forEach(username => {
+        if (username !== user.username) {
+          addNotification('New Book', `${user.displayName} published a new book: "${currentPublishingTitle}"`, 'auto_stories', username, user.username);
+        }
+      });
     }
     setView('self-profile');
     setCurrentPublishingContent('');
@@ -1576,20 +1666,37 @@ const handleSpinWheel = () => {
     if (!book) return;
 
     if (book.isCompleted) {
-      // Un-mark completed — but warn that editing was locked
-      showConfirm({
-        title: 'Reopen this work?',
-        message: 'This will remove the completed status. The book will remain un-editable since it was previously completed.',
-        confirmLabel: 'Reopen',
-        cancelLabel: 'Cancel',
-        icon: 'undo',
-        onConfirm: () => {
-          setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: false, wasCompleted: true } : b));
-          if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: false, wasCompleted: true } : prev);
-          showToast('Completed status removed', 'undo');
-        },
-        onCancel: () => {}
-      });
+      // Check if book is monetized — warn about permanent demonetization
+      if (book.isMonetized) {
+        showConfirm({
+          title: 'Warning: Demonetization',
+          message: 'This book is currently monetized. Marking it as uncomplete will permanently demonetize it and it cannot be monetized again. Are you sure?',
+          confirmLabel: 'Yes, demonetize and reopen',
+          cancelLabel: 'Cancel',
+          icon: 'money_off',
+          onConfirm: () => {
+            setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: false, wasCompleted: true, isMonetized: false, wasMonetizedBefore: true, isFree: true, price: 0 } : b));
+            if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: false, wasCompleted: true, isMonetized: false, wasMonetizedBefore: true, isFree: true, price: 0 } : prev);
+            showToast('Book demonetized and reopened', 'money_off');
+          },
+          onCancel: () => {}
+        });
+      } else {
+        // Not monetized, just reopen
+        showConfirm({
+          title: 'Reopen this work?',
+          message: 'This will remove the completed status. The book will remain un-editable since it was previously completed.',
+          confirmLabel: 'Reopen',
+          cancelLabel: 'Cancel',
+          icon: 'undo',
+          onConfirm: () => {
+            setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: false, wasCompleted: true } : b));
+            if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: false, wasCompleted: true } : prev);
+            showToast('Completed status removed', 'undo');
+          },
+          onCancel: () => {}
+        });
+      }
     } else {
       showConfirm({
         title: 'Mark as Completed?',
@@ -1867,7 +1974,12 @@ const handleSpinWheel = () => {
             <div className="absolute top-3 left-6 pointer-events-none flex justify-between w-[calc(100%-48px)] items-start">
               <div><img src={`${BASE}wordlogo.png`} alt="MainWrld" className="w-[240px] drop-shadow-md" /></div>
               <div className="flex flex-col gap-4 pointer-events-auto">
-                <button onClick={() => setView('notifications')} className="w-14 h-14 bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl flex items-center justify-center text-gray-500 border border-white relative transition-all active:scale-90"><span className="material-icons-round">notifications</span></button>
+                <button onClick={() => setView('notifications')} className="w-14 h-14 bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl flex items-center justify-center text-gray-500 border border-white relative transition-all active:scale-90">
+                  <span className="material-icons-round">notifications</span>
+                  {notifications.some(n => n.recipient === user.username && !n.read) && (
+                    <span className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full border-2 border-white" />
+                  )}
+                </button>
                 <button onClick={() => setView('daily-rewards')} className="w-14 h-14 bg-accent/90 backdrop-blur-xl rounded-2xl shadow-xl flex flex-col items-center justify-center text-white border border-white relative transition-all active:scale-90"><span className="material-icons-round">card_giftcard</span><span className="text-[7px] font-black uppercase leading-tight">Points</span></button>
               </div>
               </div>
@@ -2257,7 +2369,7 @@ const handleSpinWheel = () => {
         return (
           <div className="fixed inset-0 bg-white overflow-y-auto no-scrollbar pb-32 animate-in fade-in duration-500">
             <header className="p-6 flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-50">
-              <button onClick={() => setView('notifications')} className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400"><span className="material-icons-round">notifications</span></button>
+              <button onClick={() => setView('world')} className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400"><span className="material-icons-round">arrow_back</span></button>
               <div className="flex gap-2">
                 <button onClick={() => setView('cart')} className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400 relative">
                   <span className="material-icons-round">shopping_cart</span>
@@ -2340,6 +2452,10 @@ const handleSpinWheel = () => {
 
 
       case 'notifications':
+        // Mark all notifications as read when viewing
+        if (notifications.some(n => n.recipient === user.username && !n.read)) {
+          setTimeout(() => setNotifications(prev => prev.map(n => n.recipient === user.username ? { ...n, read: true } : n)), 500);
+        }
         return (
             <div className="fixed inset-0 bg-white overflow-y-auto no-scrollbar animate-in slide-in-from-right duration-500">
             <header className="p-6 flex items-center gap-4">
@@ -2507,6 +2623,7 @@ const handleSpinWheel = () => {
             onLike={() => selectedBook && handleLike(selectedBook.id)}
             onSave={() => selectedBook && handleSaveToLibrary(selectedBook.id)}
             isSaved={selectedBook ? isBookInLibrary(selectedBook.id) : false}
+            canSave={selectedBook ? (getUserOwnedBookIds().has(selectedBook.id) || selectedBook.isFree || user.username === selectedBook.author.username) : false}
             likesCount={selectedBook?.likes || 0}
             chapterCommentsCount={allComments.filter((c: any) => c.bookId === selectedBook?.id && (c.chapterIndex ?? 0) === readingChapterIndex).length}
             onProgressUpdate={(scrollProgress: number, chapterIndex: number) => { setReadingChapterIndex(chapterIndex); selectedBook && handleBookProgressUpdate(selectedBook.id, scrollProgress, chapterIndex); }}
@@ -2567,6 +2684,10 @@ const handleSpinWheel = () => {
         />;
 
       case 'chat-conversation':
+        const chatIsMutual = selectedChatUser ? (
+          relationships.some(r => r.admirer === user.username && r.target === selectedChatUser) &&
+          relationships.some(r => r.admirer === selectedChatUser && r.target === user.username)
+        ) : false;
         return <ChatConversationView
           currentUsername={user.username}
           currentDisplayName={user.displayName}
@@ -2580,6 +2701,7 @@ const handleSpinWheel = () => {
           onBack={() => setView('chat')}
           getAvatarItemPath={getAvatarItemPath}
           avatarConfig={(registeredUsers.find(u => u.username === selectedChatUser) as any)?.avatar}
+          isMutual={chatIsMutual}
         />;
 
       default:
@@ -3093,7 +3215,7 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
 
         <div className="flex gap-3 w-full max-w-sm mb-12">
           {isMutual ? (
-            <Button variant="secondary" className="flex-1"><span className="material-icons-round text-sm">people</span> Mutual</Button>
+            <Button onClick={onAdmire} variant="secondary" className="flex-1"><span className="material-icons-round text-sm">people</span> Mutual</Button>
           ) : (
             <Button onClick={onAdmire} variant={isAdmiring ? 'secondary' : 'primary'} className="flex-1">
               {isAdmiring ? 'Admiring' : 'Admire'}
@@ -3278,7 +3400,7 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
         )}
 
         <div className="w-full max-w-sm space-y-3">
-          {isOwned || isAuthor ? (
+          {isOwned || isAuthor || book.isFree ? (
             <Button className="w-full" onClick={onRead}><span className="material-icons-round text-sm">auto_stories</span> {bookProgress > 0 ? 'Continue' : 'Read'}</Button>
           ) : (
             <div className="flex gap-2">
@@ -3286,11 +3408,13 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
               <Button variant="secondary" className="flex-1" onClick={onAddToCart}><span className="material-icons-round text-sm">add_shopping_cart</span> Add to Cart (${(book.price || 9.99).toFixed(2)})</Button>
             </div>
           )}
-          {/* Save/Remove from Library toggle — always available */}
+          {/* Save/Remove from Library toggle — only for owned, free, or author books */}
+          {(isOwned || isAuthor || book.isFree) && (
           <Button variant={isSaved ? "secondary" : "outline"} className="w-full" onClick={() => onSave(book.id)}>
             <span className="material-icons-round text-sm mr-1">{isSaved ? 'bookmark_remove' : 'bookmark_add'}</span>
             {isSaved ? 'Remove from Library' : 'Save to Library'}
           </Button>
+          )}
           <Button variant="destructive" className="w-full bg-transparent border-none shadow-none" onClick={onReport}><span className="material-icons-round text-sm">report</span> Report</Button>
           </div>
         </div>
@@ -3532,7 +3656,7 @@ const ChapterAdBanner = ({ isPremium = false, inverted = false }: { isPremium?: 
   );
 };
 
-const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, settings, setSettings, onBack, onComments, isLiked, onLike, onSave, isSaved, onProgressUpdate, onShare, likesCount, chapterCommentsCount }: any) => {
+const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, settings, setSettings, onBack, onComments, isLiked, onLike, onSave, isSaved, canSave, onProgressUpdate, onShare, likesCount, chapterCommentsCount }: any) => {
   const [showOptions, setShowOptions] = useState(false);
   const [currentChapterIdx, setCurrentChapterIdx] = useState(initialChapterIndex || 0);
   const [localScrollProgress, setLocalScrollProgress] = useState(initialScrollProgress || 0);
@@ -3755,10 +3879,12 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
                   <span className="text-[9px] font-bold uppercase text-gray-400">Comment</span>
                   <span className="text-[9px] font-bold text-gray-400">{chapterCommentsCount || 0}</span>
               </button>
+              {canSave && (
               <button onClick={onSave} className="flex flex-col items-center gap-1 transition-all active:scale-90">
                   <span className={`material-icons-round text-2xl ${isSaved ? 'text-accent' : 'text-gray-400'}`}>{isSaved ? 'bookmark' : 'bookmark_border'}</span>
                   <span className={`text-[9px] font-bold uppercase ${isSaved ? 'text-accent' : 'text-gray-400'}`}>Save</span>
               </button>
+              )}
           </div>
           {/* Chapter navigation */}
           <div className="flex items-center gap-6">
@@ -4543,18 +4669,33 @@ const ChatListView = ({ currentUsername, relationships, registeredUsers, mutuals
     return registeredUsers.find((u: any) => u.username === username) || mutualsFallback.find((u: any) => u.username === username);
   }).filter(Boolean).filter((u: any) => !blockedUsers.has(u.username));
 
+  // Also include non-mutual users who have existing messages (read-only conversations)
+  const usersWithMessages = Array.from(new Set(
+    chatMessages
+      .filter((m: ChatMessage) => m.from === currentUsername || m.to === currentUsername)
+      .map((m: ChatMessage) => m.from === currentUsername ? m.to : m.from)
+  )).filter((username: string) => !mutualUsernames.includes(username) && !blockedUsers.has(username));
+
+  const nonMutualChatUsers = usersWithMessages.map((username: string) => {
+    return registeredUsers.find((u: any) => u.username === username) || mutualsFallback.find((u: any) => u.username === username);
+  }).filter(Boolean);
+
+  // Combine mutuals and non-mutual users with existing messages
+  const allChatUsers = [...mutuals, ...nonMutualChatUsers];
+
   // Fall back to demo mutuals if none
-  const displayMutuals = mutuals.length > 0 ? mutuals : mutualsFallback.filter((u: any) => !blockedUsers.has(u.username));
+  const displayUsers = allChatUsers.length > 0 ? allChatUsers : mutualsFallback.filter((u: any) => !blockedUsers.has(u.username));
 
   // Get conversations with last message
-  const conversations = displayMutuals.map((mutual: any) => {
+  const conversations = displayUsers.map((chatUser: any) => {
     const msgs = chatMessages.filter((m: ChatMessage) =>
-      (m.from === currentUsername && m.to === mutual.username) ||
-      (m.from === mutual.username && m.to === currentUsername)
+      (m.from === currentUsername && m.to === chatUser.username) ||
+      (m.from === chatUser.username && m.to === currentUsername)
     );
     const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
     const unread = msgs.filter((m: ChatMessage) => m.to === currentUsername && !m.read).length;
-    return { user: mutual, lastMessage: lastMsg, unreadCount: unread, messageCount: msgs.length };
+    const isStillMutual = mutualUsernames.includes(chatUser.username);
+    return { user: chatUser, lastMessage: lastMsg, unreadCount: unread, messageCount: msgs.length, isMutual: isStillMutual };
   }).sort((a: any, b: any) => {
     // Sort by most recent message, then by unread
     if (a.lastMessage && b.lastMessage) return new Date(b.lastMessage.timestamp).getTime() - new Date(a.lastMessage.timestamp).getTime();
@@ -4632,7 +4773,7 @@ const ChatListView = ({ currentUsername, relationships, registeredUsers, mutuals
   );
 };
 
-const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsername, targetUser, messages, onSend, onBack, getAvatarItemPath, avatarConfig }: any) => {
+const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsername, targetUser, messages, onSend, onBack, getAvatarItemPath, avatarConfig, isMutual }: any) => {
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -4719,7 +4860,8 @@ const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsern
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      {/* Input — only shown if still mutuals */}
+      {isMutual !== false ? (
       <div className="p-4 bg-white border-t border-gray-100 flex gap-3">
         <input
           placeholder="Type a message..."
@@ -4736,6 +4878,11 @@ const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsern
           <span className="material-icons-round">send</span>
         </button>
       </div>
+      ) : (
+      <div className="p-4 bg-gray-50 border-t border-gray-100 text-center">
+        <p className="text-xs text-gray-400 font-medium">You are no longer mutuals. Messages are read-only.</p>
+      </div>
+      )}
     </div>
   );
 };
