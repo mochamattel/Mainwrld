@@ -1868,14 +1868,6 @@ const handleSpinWheel = () => {
               <div><img src={`${BASE}wordlogo.png`} alt="MainWrld" className="w-[240px] drop-shadow-md" /></div>
               <div className="flex flex-col gap-4 pointer-events-auto">
                 <button onClick={() => setView('notifications')} className="w-14 h-14 bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl flex items-center justify-center text-gray-500 border border-white relative transition-all active:scale-90"><span className="material-icons-round">notifications</span></button>
-                <button onClick={() => setView('chat')} className="w-14 h-14 bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl flex items-center justify-center text-gray-500 border border-white relative transition-all active:scale-90">
-                  <span className="material-icons-round">chat</span>
-                  {chatMessages.filter(m => m.to === user.username && !m.read).length > 0 && (
-                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-accent text-white text-[9px] font-bold rounded-full flex items-center justify-center border-2 border-white">
-                      {chatMessages.filter(m => m.to === user.username && !m.read).length}
-                    </span>
-                  )}
-                </button>
                 <button onClick={() => setView('daily-rewards')} className="w-14 h-14 bg-accent/90 backdrop-blur-xl rounded-2xl shadow-xl flex flex-col items-center justify-center text-white border border-white relative transition-all active:scale-90"><span className="material-icons-round">card_giftcard</span><span className="text-[7px] font-black uppercase leading-tight">Points</span></button>
               </div>
               </div>
@@ -2514,6 +2506,9 @@ const handleSpinWheel = () => {
             isLiked={selectedBook ? likedBooks.has(selectedBook.id) : false}
             onLike={() => selectedBook && handleLike(selectedBook.id)}
             onSave={() => selectedBook && handleSaveToLibrary(selectedBook.id)}
+            isSaved={selectedBook ? isBookInLibrary(selectedBook.id) : false}
+            likesCount={selectedBook?.likes || 0}
+            chapterCommentsCount={allComments.filter((c: any) => c.bookId === selectedBook?.id && (c.chapterIndex ?? 0) === readingChapterIndex).length}
             onProgressUpdate={(scrollProgress: number, chapterIndex: number) => { setReadingChapterIndex(chapterIndex); selectedBook && handleBookProgressUpdate(selectedBook.id, scrollProgress, chapterIndex); }}
             onShare={() => selectedBook && handleShareBook(selectedBook)}
           />
@@ -3291,13 +3286,11 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
               <Button variant="secondary" className="flex-1" onClick={onAddToCart}><span className="material-icons-round text-sm">add_shopping_cart</span> Add to Cart (${(book.price || 9.99).toFixed(2)})</Button>
             </div>
           )}
-          {/* Save/Remove from Library toggle — not the author AND (book is free OR already owned) */}
-          {!isAuthor && (book.isFree || isOwned) && (
-            <Button variant={isSaved ? "secondary" : "outline"} className="w-full" onClick={() => onSave(book.id)}>
-              <span className="material-icons-round text-sm mr-1">{isSaved ? 'bookmark_remove' : 'bookmark_add'}</span>
-              {isSaved ? 'Remove from Library' : 'Save to Library'}
-            </Button>
-          )}
+          {/* Save/Remove from Library toggle — always available */}
+          <Button variant={isSaved ? "secondary" : "outline"} className="w-full" onClick={() => onSave(book.id)}>
+            <span className="material-icons-round text-sm mr-1">{isSaved ? 'bookmark_remove' : 'bookmark_add'}</span>
+            {isSaved ? 'Remove from Library' : 'Save to Library'}
+          </Button>
           <Button variant="destructive" className="w-full bg-transparent border-none shadow-none" onClick={onReport}><span className="material-icons-round text-sm">report</span> Report</Button>
           </div>
         </div>
@@ -3539,7 +3532,7 @@ const ChapterAdBanner = ({ isPremium = false, inverted = false }: { isPremium?: 
   );
 };
 
-const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, settings, setSettings, onBack, onComments, isLiked, onLike, onSave, onProgressUpdate, onShare }: any) => {
+const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, settings, setSettings, onBack, onComments, isLiked, onLike, onSave, isSaved, onProgressUpdate, onShare, likesCount, chapterCommentsCount }: any) => {
   const [showOptions, setShowOptions] = useState(false);
   const [currentChapterIdx, setCurrentChapterIdx] = useState(initialChapterIndex || 0);
   const [localScrollProgress, setLocalScrollProgress] = useState(initialScrollProgress || 0);
@@ -3751,29 +3744,36 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
       )}
 
       <div className="max-w-2xl mx-auto border-t border-gray-100 py-12 flex flex-col items-center gap-10">
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-12">
+              <button onClick={onLike} className="flex flex-col items-center gap-1 transition-all active:scale-90">
+                <span className={`material-icons-round text-2xl ${isLiked ? 'text-accent' : 'text-gray-400'}`}>thumb_up</span>
+                <span className={`text-[9px] font-bold uppercase ${isLiked ? 'text-accent' : 'text-gray-400'}`}>Like</span>
+                <span className={`text-[9px] font-bold ${isLiked ? 'text-accent' : 'text-gray-400'}`}>{likesCount || 0}</span>
+              </button>
+              <button onClick={() => onComments(currentChapterIdx)} className="flex flex-col items-center gap-1 transition-all active:scale-90">
+                  <span className="material-icons-round text-2xl text-gray-400">chat_bubble</span>
+                  <span className="text-[9px] font-bold uppercase text-gray-400">Comment</span>
+                  <span className="text-[9px] font-bold text-gray-400">{chapterCommentsCount || 0}</span>
+              </button>
+              <button onClick={onSave} className="flex flex-col items-center gap-1 transition-all active:scale-90">
+                  <span className={`material-icons-round text-2xl ${isSaved ? 'text-accent' : 'text-gray-400'}`}>{isSaved ? 'bookmark' : 'bookmark_border'}</span>
+                  <span className={`text-[9px] font-bold uppercase ${isSaved ? 'text-accent' : 'text-gray-400'}`}>Save</span>
+              </button>
+          </div>
+          {/* Chapter navigation */}
+          <div className="flex items-center gap-6">
             {currentChapterIdx > 0 && (
-                <button onClick={() => setCurrentChapterIdx(prev => prev - 1)} className="flex flex-col items-center gap-2 opacity-40 hover:opacity-100 transition-opacity">
-                    <span className="material-icons-round">keyboard_arrow_left</span>
-                    <span className="text-[8px] font-bold uppercase">Prev</span>
+                <button onClick={() => setCurrentChapterIdx(prev => prev - 1)} className="flex items-center gap-1 text-gray-400 hover:text-gray-600 transition-colors">
+                    <span className="material-icons-round text-sm">keyboard_arrow_left</span>
+                    <span className="text-[9px] font-bold uppercase">Prev Chapter</span>
                 </button>
             )}
-              <button onClick={onLike} className="flex flex-col items-center gap-3 transition-all active:scale-90">
-                <span className={`material-icons-round ${isLiked ? 'text-accent' : 'opacity-40'}`}>thumb_up</span>
-                <span className={`text-[8px] font-bold uppercase ${isLiked ? 'text-accent' : 'opacity-40'}`}>Like</span>
-              </button>
-              <button onClick={() => onComments(currentChapterIdx)} className="flex flex-col items-center gap-3 transition-all active:scale-90">
-                  <span className="material-icons-round opacity-40 active:text-accent">chat_bubble</span>
-                  <span className="text-[8px] font-bold uppercase opacity-40">Comment</span>
-              </button>
-             
-
-              {currentChapterIdx < visibleChapters.length - 1 && (
-                <button onClick={() => setCurrentChapterIdx(prev => prev + 1)} className="flex flex-col items-center gap-2 opacity-40 hover:opacity-100 transition-opacity">
-                    <span className="material-icons-round">keyboard_arrow_right</span>
-                    <span className="text-[8px] font-bold uppercase">Next</span>
-              </button>
-              )}
+            {currentChapterIdx < visibleChapters.length - 1 && (
+                <button onClick={() => setCurrentChapterIdx(prev => prev + 1)} className="flex items-center gap-1 text-gray-400 hover:text-gray-600 transition-colors">
+                    <span className="text-[9px] font-bold uppercase">Next Chapter</span>
+                    <span className="material-icons-round text-sm">keyboard_arrow_right</span>
+                </button>
+            )}
           </div>
       </div>
     </div>
@@ -4481,32 +4481,13 @@ const CommentsView = ({ comments, onBack, onPost, onReport, onLikeComment, curre
 
   return (
     <div className="fixed inset-0 bg-white overflow-y-auto p-6 animate-in slide-in-from-bottom duration-500 z-[400]">
-      <header className="flex justify-between items-center mb-4 sticky top-0 bg-white py-2 z-10">
-        <h1 className="text-xl font-bold">Comments</h1>
+      <header className="flex justify-between items-center mb-1 sticky top-0 bg-white py-2 z-10">
+        <div>
+          <h1 className="text-xl font-bold">Comments</h1>
+          {chapters.length > 0 && <p className="text-xs text-teal-600 font-semibold uppercase tracking-wide">For this chapter</p>}
+        </div>
         <button onClick={onBack} className="w-10 h-10 text-gray-300 transition-transform active:scale-90"><span className="material-icons-round">close</span></button>
       </header>
-
-      {/* Chapter tabs — only show if book has multiple chapters */}
-      {chapters.length > 1 && (
-        <div className="flex overflow-x-auto no-scrollbar gap-2 mb-6 pb-2">
-          {chapters.map((ch: any, idx: number) => (
-            <button
-              key={idx}
-              onClick={() => setActiveChapter(idx)}
-              className={`flex-shrink-0 px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all ${
-                activeChapter === idx
-                  ? 'bg-accent text-white shadow-md'
-                  : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-              }`}
-            >
-              {ch.title || `Ch. ${idx + 1}`}
-              <span className="ml-1.5 text-[8px] opacity-70">
-                ({comments.filter((c: any) => (c.chapterIndex ?? 0) === idx).length})
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
 
       <div className="space-y-6 pb-32">
         {filteredComments.map((c: any) => {
