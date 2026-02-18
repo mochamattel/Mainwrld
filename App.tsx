@@ -198,7 +198,7 @@ interface Book {
   tagline: string;
   genres: string[];
   hashtags: string[];
-  likes: number;
+  likes: number[]; // per-chapter likes array
   commentsCount: number;
   publishedDate: string; // ISO format or YYYY-MM-DD
   isCompleted: boolean;
@@ -411,7 +411,7 @@ const INITIAL_BOOKS: Book[] = [
     tagline: 'A silent thrill in a digital world.',
     genres: ['Mystery', 'Dystopian'],
     hashtags: ['Cyber', 'Void', 'Echo'],
-    likes: 1240,
+    likes: [1240],
     commentsCount: 86,
     publishedDate: '2025-01-10',
     isCompleted: false,
@@ -439,7 +439,7 @@ const INITIAL_BOOKS: Book[] = [
     tagline: 'The gold standard of future politics.',
     genres: ['Sci-Fi', 'Romance'],
     hashtags: ['Future', 'Gold'],
-    likes: 500,
+    likes: [250, 250],
     commentsCount: 200,
     publishedDate: '2025-12-15',
     isCompleted: true,
@@ -466,7 +466,7 @@ const INITIAL_BOOKS: Book[] = [
     tagline: 'Some love stories are found between the pages.',
     genres: ['Romance', 'Fiction'],
     hashtags: ['LoveLetters', 'Historical', 'Mystery', 'Library'],
-    likes: 2340,
+    likes: [780, 780, 780],
     commentsCount: 0,
     publishedDate: '2026-01-22',
     isCompleted: true,
@@ -668,7 +668,17 @@ const App: React.FC = () => {
         // Also ensure all books have a price (default to 9.99 if missing)
         const booksWithPrices = parsed.map(b => {
           const initialBook = INITIAL_BOOKS.find(ib => ib.id === b.id);
-          return { ...b, price: b.price ?? initialBook?.price ?? 9.99 };
+          // Migrate likes from number to number[] if needed
+          const chapterCount = b.chapters?.length || b.chaptersCount || 1;
+          let likes = b.likes;
+          if (!Array.isArray(likes)) {
+            const arr = new Array(chapterCount).fill(0);
+            arr[0] = likes || 0;
+            likes = arr;
+          } else {
+            while (likes.length < chapterCount) likes.push(0);
+          }
+          return { ...b, price: b.price ?? initialBook?.price ?? 9.99, likes };
         });
         const savedIds = new Set(booksWithPrices.map(b => b.id));
         const missing = INITIAL_BOOKS.filter(b => !savedIds.has(b.id));
@@ -886,6 +896,26 @@ const App: React.FC = () => {
     } catch {}
     return {};
   });
+
+  // Helper to get total likes for a book (handles both old number and new number[] format)
+  const getTotalLikes = (likes: number | number[]): number => {
+    if (Array.isArray(likes)) return likes.reduce((a, b) => a + b, 0);
+    return likes || 0;
+  };
+
+  // Helper to get chapter likes for a book (ensures array format)
+  const getChapterLikes = (likes: number | number[], chapterCount: number): number[] => {
+    if (Array.isArray(likes)) {
+      // Extend array if needed for new chapters
+      const arr = [...likes];
+      while (arr.length < chapterCount) arr.push(0);
+      return arr;
+    }
+    // Migrate old format: distribute total evenly or put all on first chapter
+    const arr = new Array(Math.max(chapterCount, 1)).fill(0);
+    arr[0] = likes || 0;
+    return arr;
+  };
 
   // Helper to get current user's owned book IDs
   const getUserOwnedBookIds = useCallback(() => {
@@ -1277,22 +1307,38 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLike = (bookId: string) => {
+  const handleLike = (bookId: string, chapterIndex: number = 0) => {
     likedBooksInteracted.current = true;
-    const isLiked = likedBooks.has(bookId);
+    const likeKey = `${bookId}:${chapterIndex}`;
+    const isLiked = likedBooks.has(likeKey);
     if (isLiked) {
       const next = new Set(likedBooks);
-      next.delete(bookId);
+      next.delete(likeKey);
       setLikedBooks(next);
-      setBooks(prev => prev.map(b => b.id === bookId ? { ...b, likes: b.likes - 1 } : b));
+      setBooks(prev => prev.map(b => {
+        if (b.id !== bookId) return b;
+        const chLikes = getChapterLikes(b.likes, (b.chapters?.length || 1));
+        chLikes[chapterIndex] = Math.max(0, (chLikes[chapterIndex] || 0) - 1);
+        const updated = { ...b, likes: chLikes };
+        if (selectedBook && selectedBook.id === bookId) setSelectedBook(updated);
+        return updated;
+      }));
     } else {
       const next = new Set(likedBooks);
-      next.add(bookId);
+      next.add(likeKey);
       setLikedBooks(next);
       const targetBook = books.find(b => b.id === bookId);
       if (targetBook) {
-        setBooks(prev => prev.map(b => b.id === bookId ? { ...b, likes: b.likes + 1 } : b));
-        addNotification('Book Liked', `${user.displayName} liked your book "${targetBook.title}"`, 'favorite', targetBook.author.username);
+        const chapterTitle = targetBook.chapters?.[chapterIndex]?.title || `Chapter ${chapterIndex + 1}`;
+        setBooks(prev => prev.map(b => {
+          if (b.id !== bookId) return b;
+          const chLikes = getChapterLikes(b.likes, (b.chapters?.length || 1));
+          chLikes[chapterIndex] = (chLikes[chapterIndex] || 0) + 1;
+          const updated = { ...b, likes: chLikes };
+          if (selectedBook && selectedBook.id === bookId) setSelectedBook(updated);
+          return updated;
+        }));
+        addNotification('Chapter Liked', `${user.displayName} liked ${chapterTitle} from "${targetBook.title}"`, 'favorite', targetBook.author.username);
       }
     }
   };
@@ -1575,6 +1621,7 @@ const handleSpinWheel = () => {
             coverColor: data.coverImage ? '#f5f5f5' : b.coverColor,
             chapters: updatedChapters,
             chaptersCount: Math.max(b.chaptersCount, (targetIndex + 1)),
+            likes: (() => { const arr = Array.isArray(b.likes) ? [...b.likes] : [b.likes || 0]; while (arr.length < updatedChapters.length) arr.push(0); return arr; })(),
             isDraft: false,
             commentsEnabled: data.commentsEnabled,
             content: updatedChapters.map(c => c.content).join('\n\n')
@@ -1600,7 +1647,7 @@ const handleSpinWheel = () => {
         author: user,
         coverColor: data.coverImage ? '#f5f5f5' : '#' + Math.floor(Math.random()*16777215).toString(16),
         coverImage: data.coverImage || undefined,
-        likes: 0,
+        likes: [0],
         commentsCount: 0,
         monetizationAttempts: 0,
         publishedDate: new Date().toISOString().split('T')[0],
@@ -1771,7 +1818,7 @@ const handleSpinWheel = () => {
         title: title.trim(),
         author: user,
         coverColor: '#' + Math.floor(Math.random()*16777215).toString(16),
-        likes: 0,
+        likes: [0],
         commentsCount: 0,
         publishedDate: new Date().toISOString().split('T')[0],
         isCompleted: false,
@@ -2599,8 +2646,6 @@ const handleSpinWheel = () => {
             onBack={() => setView('explore')}
             onRead={() => { setReadingActivity(prev => { const ua = [...(prev[user.username] || [])]; const ei = ua.findIndex(a => a.bookId === selectedBook.id); const entry = { bookId: selectedBook.id, progress: getUserBookProgress(selectedBook.id).scrollProgress, lastRead: new Date().toISOString() }; if (ei >= 0) ua[ei] = entry; else ua.unshift(entry); return { ...prev, [user.username]: ua.slice(0, 10) }; }); setView('reading'); }}
             onAuthorClick={(u: User) => { setSelectedProfileUser(u); setView('profile'); }}
-            isLiked={likedBooks.has(selectedBook.id)}
-            onLike={() => handleLike(selectedBook.id)}
             onSave={() => handleSaveToLibrary(selectedBook.id)}
             isSaved={isBookInLibrary(selectedBook.id)}
             onReport={() => handleReport('Book', selectedBook.id)}
@@ -2625,12 +2670,11 @@ const handleSpinWheel = () => {
             setSettings={setReaderSettings}
             onBack={() => setView('book-detail')}
             onComments={(chapterIdx?: number) => { setReadingChapterIndex(chapterIdx ?? 0); setView('comments'); }}
-            isLiked={selectedBook ? likedBooks.has(selectedBook.id) : false}
-            onLike={() => selectedBook && handleLike(selectedBook.id)}
+            likedChapters={likedBooks}
+            onLike={(chapterIdx: number) => selectedBook && handleLike(selectedBook.id, chapterIdx)}
             onSave={() => selectedBook && handleSaveToLibrary(selectedBook.id)}
             isSaved={selectedBook ? isBookInLibrary(selectedBook.id) : false}
             canSave={selectedBook ? (user.username !== selectedBook.author.username && (getUserOwnedBookIds().has(selectedBook.id) || selectedBook.isFree || !selectedBook.isMonetized)) : false}
-            likesCount={selectedBook?.likes || 0}
             chapterCommentsCount={allComments.filter((c: any) => c.bookId === selectedBook?.id && (c.chapterIndex ?? 0) === readingChapterIndex).length}
             onProgressUpdate={(scrollProgress: number, chapterIndex: number) => { setReadingChapterIndex(chapterIndex); selectedBook && handleBookProgressUpdate(selectedBook.id, scrollProgress, chapterIndex); }}
             onShare={() => selectedBook && handleShareBook(selectedBook)}
@@ -2833,7 +2877,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
       if (!authorMap[username]) {
         authorMap[username] = { user: b.author, totalLikes: 0 };
       }
-      authorMap[username].totalLikes += b.likes;
+      authorMap[username].totalLikes += Array.isArray(b.likes) ? b.likes.reduce((a: number, c: number) => a + c, 0) : (b.likes || 0);
     });
     return Object.values(authorMap)
       .sort((a, b) => b.totalLikes - a.totalLikes)
@@ -2846,8 +2890,10 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
       const now = Date.now();
       const ageA = (now - new Date(a.publishedDate).getTime()) / (1000 * 60 * 60); // hours
       const ageB = (now - new Date(b.publishedDate).getTime()) / (1000 * 60 * 60);
-      const scoreA = a.likes / Math.max(ageA, 1); // likes per hour
-      const scoreB = b.likes / Math.max(ageB, 1);
+      const totalLikesA = Array.isArray(a.likes) ? a.likes.reduce((x: number, y: number) => x + y, 0) : (a.likes || 0);
+      const totalLikesB = Array.isArray(b.likes) ? b.likes.reduce((x: number, y: number) => x + y, 0) : (b.likes || 0);
+      const scoreA = totalLikesA / Math.max(ageA, 1); // likes per hour
+      const scoreB = totalLikesB / Math.max(ageB, 1);
       return scoreB - scoreA;
     }).slice(0, 10);
   }, [books]);
@@ -3074,7 +3120,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
                         <div className="absolute top-4 right-4 bg-red-500/90 backdrop-blur-md px-2 py-0.5 rounded-lg text-[7px] font-bold text-white uppercase tracking-wider">Explicit</div>
                      )}
                      <div className="absolute bottom-4 left-4 right-4 flex justify-between opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 z-20">
-                        <div className="flex items-center gap-1"><span className="material-icons-round text-[10px] text-white">favorite</span><span className="text-[9px] font-bold text-white">{b.likes}</span></div>
+                        <div className="flex items-center gap-1"><span className="material-icons-round text-[10px] text-white">favorite</span><span className="text-[9px] font-bold text-white">{Array.isArray(b.likes) ? b.likes.reduce((a: number, c: number) => a + c, 0) : (b.likes || 0)}</span></div>
                         <div className="flex items-center gap-1"><span className="material-icons-round text-[10px] text-white">chat_bubble</span><span className="text-[9px] font-bold text-white">{b.commentsCount}</span></div>
                      </div>
                   </div>
@@ -3363,10 +3409,10 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
         </div>
 
         <div className="grid grid-cols-3 gap-6 w-full max-w-sm mb-12 border-y border-gray-50 py-8">
-          <button onClick={onLike} className="flex flex-col items-center group">
-            <p className={`text-lg font-bold transition-colors ${isLiked ? 'text-accent' : ''}`}>{book.likes}</p>
-            <p className={`text-[9px] font-bold uppercase ${isLiked ? 'text-accent' : 'text-gray-300'}`}>Likes</p>
-          </button>
+          <div className="flex flex-col items-center">
+            <p className="text-lg font-bold">{Array.isArray(book.likes) ? book.likes.reduce((a: number, b: number) => a + b, 0) : (book.likes || 0)}</p>
+            <p className="text-[9px] text-gray-300 font-bold uppercase">Likes</p>
+          </div>
           <div><p className="text-lg font-bold">{book.chaptersCount}</p><p className="text-[9px] text-gray-300 font-bold uppercase">Chapters</p></div>
           <div><p className="text-lg font-bold">{book.commentsCount}</p><p className="text-[9px] text-gray-300 font-bold uppercase">Comments</p></div>
           
@@ -3662,7 +3708,7 @@ const ChapterAdBanner = ({ isPremium = false, inverted = false }: { isPremium?: 
   );
 };
 
-const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, settings, setSettings, onBack, onComments, isLiked, onLike, onSave, isSaved, canSave, onProgressUpdate, onShare, likesCount, chapterCommentsCount }: any) => {
+const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, settings, setSettings, onBack, onComments, likedChapters, onLike, onSave, isSaved, canSave, onProgressUpdate, onShare, chapterCommentsCount }: any) => {
   const [showOptions, setShowOptions] = useState(false);
   const [currentChapterIdx, setCurrentChapterIdx] = useState(initialChapterIndex || 0);
   const [localScrollProgress, setLocalScrollProgress] = useState(initialScrollProgress || 0);
@@ -3791,8 +3837,13 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
     onProgressUpdate(localScrollProgress, currentChapterIdx);
   }, [localScrollProgress, currentChapterIdx, onProgressUpdate]);
 
-  // Scroll to top when chapter changes
+  // Scroll to top when chapter changes (skip initial mount to allow restore)
+  const chapterChangeRef = useRef(false);
   useEffect(() => {
+    if (!chapterChangeRef.current) {
+      chapterChangeRef.current = true;
+      return; // Skip initial mount — let the scroll restore handle it
+    }
     if (containerRef.current) {
       containerRef.current.scrollTop = 0;
     }
@@ -3887,11 +3938,19 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
 
       <div className="max-w-2xl mx-auto border-t border-gray-100 py-12 flex flex-col items-center gap-10">
         <div className="flex items-center gap-12">
-              <button onClick={onLike} className="flex flex-col items-center gap-1 transition-all active:scale-90">
-                <span className={`material-icons-round text-2xl ${isLiked ? 'text-accent' : 'text-gray-400'}`}>thumb_up</span>
-                <span className={`text-[9px] font-bold uppercase ${isLiked ? 'text-accent' : 'text-gray-400'}`}>Like</span>
-                <span className={`text-[9px] font-bold ${isLiked ? 'text-accent' : 'text-gray-400'}`}>{likesCount || 0}</span>
-              </button>
+              {(() => {
+                const chapterLikeKey = `${book?.id}:${currentChapterIdx}`;
+                const chapterIsLiked = likedChapters?.has(chapterLikeKey) || false;
+                const chapterLikesArr = Array.isArray(book?.likes) ? book.likes : [book?.likes || 0];
+                const chapterLikesCount = chapterLikesArr[currentChapterIdx] || 0;
+                return (
+                  <button onClick={() => onLike(currentChapterIdx)} className="flex flex-col items-center gap-1 transition-all active:scale-90">
+                    <span className={`material-icons-round text-2xl ${chapterIsLiked ? 'text-accent' : 'text-gray-400'}`}>thumb_up</span>
+                    <span className={`text-[9px] font-bold uppercase ${chapterIsLiked ? 'text-accent' : 'text-gray-400'}`}>Like</span>
+                    <span className={`text-[9px] font-bold ${chapterIsLiked ? 'text-accent' : 'text-gray-400'}`}>{chapterLikesCount}</span>
+                  </button>
+                );
+              })()}
               <button onClick={() => onComments(currentChapterIdx)} className="flex flex-col items-center gap-1 transition-all active:scale-90">
                   <span className="material-icons-round text-2xl text-gray-400">chat_bubble</span>
                   <span className="text-[9px] font-bold uppercase text-gray-400">Comment</span>
