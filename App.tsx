@@ -889,7 +889,9 @@ const App: React.FC = () => {
 
   // Helper to get current user's owned book IDs
   const getUserOwnedBookIds = useCallback(() => {
-    return new Set(userBookData[user.username]?.ownedBookIds || []);
+    const owned = userBookData[user.username]?.ownedBookIds || [];
+    const purchased = userBookData[user.username]?.purchasedBookIds || [];
+    return new Set([...owned, ...purchased]);
   }, [userBookData, user.username]);
 
   // Helper to get current user's progress for a book (returns { scrollProgress, chapterIndex })
@@ -904,9 +906,14 @@ const App: React.FC = () => {
   // Helper to mark a book as owned for current user
   const setUserOwnsBook = useCallback((bookId: string) => {
     setUserBookData(prev => {
-      const userData = prev[user.username] || { ownedBookIds: [], bookProgress: {} };
+      const userData = prev[user.username] || { ownedBookIds: [], bookProgress: {}, purchasedBookIds: [] };
       if (!userData.ownedBookIds.includes(bookId)) {
         userData.ownedBookIds = [...userData.ownedBookIds, bookId];
+      }
+      // Also track as purchased so removing from library doesn't lose access
+      if (!userData.purchasedBookIds) userData.purchasedBookIds = [];
+      if (!userData.purchasedBookIds.includes(bookId)) {
+        userData.purchasedBookIds = [...userData.purchasedBookIds, bookId];
       }
       return { ...prev, [user.username]: userData };
     });
@@ -2368,8 +2375,7 @@ const handleSpinWheel = () => {
       case 'self-profile':
         return (
           <div className="fixed inset-0 bg-white overflow-y-auto no-scrollbar pb-32 animate-in fade-in duration-500">
-            <header className="p-6 flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-50">
-              <button onClick={() => setView('world')} className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400"><span className="material-icons-round">arrow_back</span></button>
+            <header className="p-6 flex justify-end items-center sticky top-0 bg-white/80 backdrop-blur-md z-50">
               <div className="flex gap-2">
                 <button onClick={() => setView('cart')} className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400 relative">
                   <span className="material-icons-round">shopping_cart</span>
@@ -2460,7 +2466,7 @@ const handleSpinWheel = () => {
             <div className="fixed inset-0 bg-white overflow-y-auto no-scrollbar animate-in slide-in-from-right duration-500">
             <header className="p-6 flex items-center gap-4">
                 <button
-                onClick={() => setView('self-profile')}
+                onClick={() => setView('home')}
                 className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400"
                 >
                 <span className="material-icons-round">arrow_back</span>
@@ -2623,7 +2629,7 @@ const handleSpinWheel = () => {
             onLike={() => selectedBook && handleLike(selectedBook.id)}
             onSave={() => selectedBook && handleSaveToLibrary(selectedBook.id)}
             isSaved={selectedBook ? isBookInLibrary(selectedBook.id) : false}
-            canSave={selectedBook ? (getUserOwnedBookIds().has(selectedBook.id) || selectedBook.isFree || user.username === selectedBook.author.username) : false}
+            canSave={selectedBook ? (user.username !== selectedBook.author.username && (getUserOwnedBookIds().has(selectedBook.id) || selectedBook.isFree || !selectedBook.isMonetized)) : false}
             likesCount={selectedBook?.likes || 0}
             chapterCommentsCount={allComments.filter((c: any) => c.bookId === selectedBook?.id && (c.chapterIndex ?? 0) === readingChapterIndex).length}
             onProgressUpdate={(scrollProgress: number, chapterIndex: number) => { setReadingChapterIndex(chapterIndex); selectedBook && handleBookProgressUpdate(selectedBook.id, scrollProgress, chapterIndex); }}
@@ -3400,7 +3406,7 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
         )}
 
         <div className="w-full max-w-sm space-y-3">
-          {isOwned || isAuthor || book.isFree ? (
+          {isOwned || isAuthor || book.isFree || !book.isMonetized ? (
             <Button className="w-full" onClick={onRead}><span className="material-icons-round text-sm">auto_stories</span> {bookProgress > 0 ? 'Continue' : 'Read'}</Button>
           ) : (
             <div className="flex gap-2">
@@ -3408,8 +3414,8 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
               <Button variant="secondary" className="flex-1" onClick={onAddToCart}><span className="material-icons-round text-sm">add_shopping_cart</span> Add to Cart (${(book.price || 9.99).toFixed(2)})</Button>
             </div>
           )}
-          {/* Save/Remove from Library toggle — only for owned, free, or author books */}
-          {(isOwned || isAuthor || book.isFree) && (
+          {/* Save/Remove from Library toggle — only for owned or free books, never for the author */}
+          {!isAuthor && (isOwned || book.isFree || !book.isMonetized) && (
           <Button variant={isSaved ? "secondary" : "outline"} className="w-full" onClick={() => onSave(book.id)}>
             <span className="material-icons-round text-sm mr-1">{isSaved ? 'bookmark_remove' : 'bookmark_add'}</span>
             {isSaved ? 'Remove from Library' : 'Save to Library'}
@@ -3701,10 +3707,12 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
 
   const isAuthor = currentUser?.username === book?.author?.username;
   const isOwned = book?.isOwned;
-  const canAccessAll = isAuthor || isOwned;
-  
+  const isFreeOrUnmonetized = book?.isFree || !book?.isMonetized;
+  const canAccessAll = isAuthor || isOwned || isFreeOrUnmonetized;
+
   const allChapters = book?.chapters || [];
-  const visibleChapters = canAccessAll ? allChapters : allChapters.slice(0, 1);
+  // Author sees all chapters (including drafts), others with access see only published chapters, non-access users see only first chapter (preview)
+  const visibleChapters = isAuthor ? allChapters : (canAccessAll ? allChapters.slice(0, book?.chaptersCount || allChapters.length) : allChapters.slice(0, 1));
   const currentChapter = visibleChapters[currentChapterIdx] || { title: book?.title, content: book?.content };
 
   const handleForward = () => {
@@ -3783,6 +3791,16 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
     onProgressUpdate(localScrollProgress, currentChapterIdx);
   }, [localScrollProgress, currentChapterIdx, onProgressUpdate]);
 
+  // Scroll to top when chapter changes
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
+    }
+    if (pageFlipRef.current) {
+      pageFlipRef.current.scrollLeft = 0;
+    }
+    setLocalScrollProgress(0);
+  }, [currentChapterIdx]);
 
   return (
     <div className={`fixed inset-0 animate-in fade-in duration-500 overflow-hidden flex flex-col ${settings.inverted ? 'bg-black text-white' : 'bg-white text-black'}`}>
