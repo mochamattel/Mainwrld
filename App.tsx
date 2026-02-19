@@ -1739,13 +1739,13 @@ const handleSpinWheel = () => {
         // Not monetized, just reopen
         showConfirm({
           title: 'Reopen this work?',
-          message: 'This will remove the completed status. The book will remain un-editable since it was previously completed.',
+          message: 'This will remove the completed status.',
           confirmLabel: 'Reopen',
           cancelLabel: 'Cancel',
           icon: 'undo',
           onConfirm: () => {
-            setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: false, wasCompleted: true } : b));
-            if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: false, wasCompleted: true } : prev);
+            setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: false, wasCompleted: false } : b));
+            if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: false, wasCompleted: false } : prev);
             showToast('Completed status removed', 'undo');
           },
           onCancel: () => {}
