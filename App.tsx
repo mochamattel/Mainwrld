@@ -1465,22 +1465,32 @@ const App: React.FC = () => {
   };
 
   const handleSaveToLibrary = (bookId: string) => {
-    const userData = userBookData[user.username] || { ownedBookIds: [], bookProgress: {} };
-    const isInLibrary = userData.ownedBookIds.includes(bookId);
-    const book = books.find(b => b.id === bookId);
+    setBooks(prev => {
+      const updated = prev.map(b => b.id === bookId ? { ...b, isOwned: true } : b);
+      // Sync selectedBook if currently looking at this book's details
+      const updatedBook = updated.find(b => b.id === bookId);
+      if (updatedBook && selectedBook && selectedBook.id === bookId) setSelectedBook(updatedBook);
+      return updated;
+    });
+    setUserOwnsBook(bookId);
+    showToast('Book saved to your library!', 'bookmark');
+  };
 
-    if (isInLibrary) {
-      // Remove from library — but keep access if owned/free/author
-      setUserBookData(prev => {
-        const ud = { ...(prev[user.username] || { ownedBookIds: [], bookProgress: {} }) };
-        ud.ownedBookIds = ud.ownedBookIds.filter((id: string) => id !== bookId);
-        return { ...prev, [user.username]: ud };
-      });
-      showToast('Removed from Library', 'bookmark_remove');
-    } else {
-      setUserOwnsBook(bookId);
-      showToast('Saved to Library!', 'bookmark');
-    }
+  const handleRemoveFromLibrary = (bookId: string) => {
+    setBooks(prev => {
+      const updated = prev.map(b => b.id === bookId ? { ...b, isOwned: false } : b);
+      // Sync selectedBook if currently looking at this book's details
+      const updatedBook = updated.find(b => b.id === bookId);
+      if (updatedBook && selectedBook && selectedBook.id === bookId) setSelectedBook(updatedBook);
+      return updated;
+    });
+    setUserBookData(prev => {
+      const ud = { ...(prev[user.username] || { ownedBookIds: [], bookProgress: {}, purchasedBookIds: [] }) };
+      ud.ownedBookIds = ud.ownedBookIds.filter((id: string) => id !== bookId);
+      if (ud.purchasedBookIds) ud.purchasedBookIds = ud.purchasedBookIds.filter((id: string) => id !== bookId);
+      return { ...prev, [user.username]: ud };
+    });
+    showToast('Book removed from your library.', 'bookmark_remove');
   };
 
   const isBookInLibrary = useCallback((bookId: string): boolean => {
@@ -1739,7 +1749,7 @@ const handleSpinWheel = () => {
         // Not monetized, just reopen
         showConfirm({
           title: 'Reopen this work?',
-          message: 'This will remove the completed status.',
+          message: 'This will remove the completed status. The book will become editable again.',
           confirmLabel: 'Reopen',
           cancelLabel: 'Cancel',
           icon: 'undo',
@@ -2017,8 +2027,13 @@ const handleSpinWheel = () => {
                   }).filter(Boolean) as User[];
                   // If no dynamic mutuals, show MUTUALS as fallback so world isn't empty
                   const avatarsToShow = dynamicMutuals.length > 0 ? dynamicMutuals : MUTUALS;
+                  // Limit visible mutuals to avoid overwhelming the scene
+                  const eightHoursAgo = Date.now() - (8 * 3600 * 1000);
+                  const visibleMutuals = avatarsToShow.length > 200
+                    ? avatarsToShow.filter((m: any) => m.isOnline || (m.lastOnline && m.lastOnline > eightHoursAgo)).slice(0, 200)
+                    : avatarsToShow.slice(0, 200);
                   // Filter out blocked users
-                  return avatarsToShow.filter(u => !blockedUsers.has(u.username)).map(u => (
+                  return visibleMutuals.filter(u => !blockedUsers.has(u.username)).map(u => (
                     <MovingAvatar key={u.username} user={u} onClick={() => { setSelectedProfileUser(u); setView('profile'); }} />
                   ));
                 })()}
@@ -2655,6 +2670,7 @@ const handleSpinWheel = () => {
             onRead={() => { setReadingActivity(prev => { const ua = [...(prev[user.username] || [])]; const ei = ua.findIndex(a => a.bookId === selectedBook.id); const entry = { bookId: selectedBook.id, progress: getUserBookProgress(selectedBook.id).scrollProgress, lastRead: new Date().toISOString() }; if (ei >= 0) ua[ei] = entry; else ua.unshift(entry); return { ...prev, [user.username]: ua.slice(0, 10) }; }); setView('reading'); }}
             onAuthorClick={(u: User) => { setSelectedProfileUser(u); setView('profile'); }}
             onSave={() => handleSaveToLibrary(selectedBook.id)}
+            onRemove={() => handleRemoveFromLibrary(selectedBook.id)}
             isSaved={isBookInLibrary(selectedBook.id)}
             onReport={() => handleReport('Book', selectedBook.id)}
             onShare={() => handleShareBook(selectedBook)}
@@ -3382,7 +3398,7 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
   );
 };
 
-const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack, onRead, onAuthorClick, isLiked, onLike, onSave, isSaved, onReport, onShare, onAddToCart, onToggleFavorite, onUnpublish, onDelete, onMarkCompleted}: any) => {
+const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack, onRead, onAuthorClick, isLiked, onLike, onSave, onRemove, isSaved, onReport, onShare, onAddToCart, onToggleFavorite, onUnpublish, onDelete, onMarkCompleted}: any) => {
   const isAuthor = currentUser.username === book.author.username;
 
   
@@ -3468,11 +3484,15 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
               <Button variant="secondary" className="flex-1" onClick={onAddToCart}><span className="material-icons-round text-sm">add_shopping_cart</span> Add to Cart (${(book.price || 9.99).toFixed(2)})</Button>
             </div>
           )}
-          {/* Save/Remove from Library toggle — only for owned or free books, never for the author */}
-          {!isAuthor && (isOwned || book.isFree || !book.isMonetized) && (
-          <Button variant={isSaved ? "secondary" : "outline"} className="w-full" onClick={() => onSave(book.id)}>
-            <span className="material-icons-round text-sm mr-1">{isSaved ? 'bookmark_remove' : 'bookmark_add'}</span>
-            {isSaved ? 'Remove from Library' : 'Save to Library'}
+          {/* Library button depends strictly on isOwned (visibility in Library tab) */}
+          {!isAuthor && (
+          <Button
+            variant={isOwned ? "destructive" : "outline"}
+            className={`w-full ${isOwned ? 'bg-transparent border-none shadow-none text-gray-400' : ''}`}
+            onClick={() => isOwned ? onRemove(book.id) : onSave(book.id)}
+          >
+            <span className="material-icons-round text-sm">{isOwned ? 'remove_circle_outline' : 'bookmark_add'}</span>
+            {isOwned ? 'Remove from Library' : 'Save to Library'}
           </Button>
           )}
           <Button variant="destructive" className="w-full bg-transparent border-none shadow-none" onClick={onReport}><span className="material-icons-round text-sm">report</span> Report</Button>
@@ -5092,7 +5112,7 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack }: 
         </div>
 
         <div className="relative min-h-[400px]">
-          {selectedBook && (selectedBook.isCompleted || selectedBook.wasCompleted) ? (
+          {selectedBook && selectedBook.isCompleted ? (
             <div className="w-full min-h-[400px] flex flex-col items-center justify-center text-center p-8 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
               <span className="material-icons-round text-4xl text-gray-300 mb-3">lock</span>
               <p className="text-sm font-bold text-gray-400">This book has been completed</p>
