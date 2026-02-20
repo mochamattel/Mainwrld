@@ -670,9 +670,8 @@ const App: React.FC = () => {
   const [readingChapterIndex, setReadingChapterIndex] = useState(0);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
   const [selectedChatUser, setSelectedChatUser] = useState<string | null>(null);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
-    try { return JSON.parse(localStorage.getItem('mainwrld_chat_messages') || '[]'); } catch { return []; }
-  });
+  // Chat messages (Firestore real-time)
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [moveDir, setMoveDir] = useState(new THREE.Vector3());
   const [readerSettings, setReaderSettings] = useState({ fontSize: 13, inverted: false, scrollMode: true });
 
@@ -700,40 +699,17 @@ const App: React.FC = () => {
     return age < 16;
   }, [registeredUsers, user.username]);
 
-  // Reports state
-  const [reports, setReports] = useState<Report[]>(() => {
-    const saved = localStorage.getItem('mainwrld_reports');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Reports state (Firestore real-time)
+  const [reports, setReports] = useState<Report[]>([]);
 
-  // Relationships state (admirer/admiring tracking)
-  const [relationships, setRelationships] = useState<Relationship[]>(() => {
-    const saved = localStorage.getItem('mainwrld_relationships');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Relationships state (Firestore real-time)
+  const [relationships, setRelationships] = useState<Relationship[]>([]);
 
-  // Notifications state (persisted)
-  const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
-    const saved = localStorage.getItem('mainwrld_notifications');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Notifications state (Firestore real-time)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
-  // Avatar customization state (persisted, per-user keyed by username)
-  const [allAvatarConfigs, setAllAvatarConfigs] = useState<Record<string, AvatarConfig>>(() => {
-    try {
-      const saved = localStorage.getItem('mainwrld_avatars');
-      if (saved) return JSON.parse(saved);
-      // Migrate from old single-avatar key — use actual logged-in username from localStorage
-      const oldSaved = localStorage.getItem('mainwrld_avatar');
-      if (oldSaved) {
-        const oldConfig = JSON.parse(oldSaved);
-        const cu = localStorage.getItem('currentUser');
-        const migrateUsername = cu ? JSON.parse(cu).username : user.username;
-        return { [migrateUsername]: oldConfig };
-      }
-    } catch {}
-    return {};
-  });
+  // Avatar customization state (loaded from Firestore user doc)
+  const [allAvatarConfigs, setAllAvatarConfigs] = useState<Record<string, AvatarConfig>>({});
 
   const avatarConfig = allAvatarConfigs[user.username] || null;
   const setAvatarConfig = useCallback((config: AvatarConfig | null) => {
@@ -747,20 +723,8 @@ const App: React.FC = () => {
     });
   }, [user.username]);
 
-  const [allUnlockedItems, setAllUnlockedItems] = useState<Record<string, string[]>>(() => {
-    try {
-      const saved = localStorage.getItem('mainwrld_avatar_unlocked_all');
-      if (saved) return JSON.parse(saved);
-      // Migrate from old single key
-      const oldSaved = localStorage.getItem('mainwrld_avatar_unlocked');
-      if (oldSaved) {
-        const cu = localStorage.getItem('currentUser');
-        const migrateUsername = cu ? JSON.parse(cu).username : user.username;
-        return { [migrateUsername]: JSON.parse(oldSaved) };
-      }
-    } catch {}
-    return {};
-  });
+  // Unlocked avatar items (loaded from Firestore user doc)
+  const [allUnlockedItems, setAllUnlockedItems] = useState<Record<string, string[]>>({});
 
   const unlockedAvatarItems = useMemo(() => new Set(allUnlockedItems[user.username] || []), [allUnlockedItems, user.username]);
   const setUnlockedAvatarItems = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
@@ -771,40 +735,14 @@ const App: React.FC = () => {
     });
   }, [user.username]);
 
-  // Blocked users state (persisted)
-  const [blockedUsers, setBlockedUsers] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('mainwrld_blocked');
-    return saved ? new Set(JSON.parse(saved)) : new Set();
-  });
+  // Blocked users state (loaded from Firestore user doc)
+  const [blockedUsers, setBlockedUsers] = useState<Set<string>>(new Set());
 
-  // Reading activity: tracks what each user has been reading { username: [{ bookId, progress, lastRead }, ...] }
-  const [readingActivity, setReadingActivity] = useState<Record<string, { bookId: string; progress: number; lastRead: string }[]>>(() => {
-    try {
-      const saved = localStorage.getItem('mainwrld_reading_activity');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Migrate old format (single object per user) to new format (array per user)
-        const migrated: Record<string, any[]> = {};
-        for (const [key, val] of Object.entries(parsed)) {
-          migrated[key] = Array.isArray(val) ? val : [val];
-        }
-        return migrated;
-      }
-    } catch {}
-    // Seed mock data so profiles aren't empty
-    return {
-      'jemma_b': [{ bookId: 'e1', progress: 62, lastRead: new Date().toISOString() }],
-      'mark_da_don': [{ bookId: 'e2', progress: 34, lastRead: new Date().toISOString() }],
-    };
-  });
+  // Reading activity (loaded from Firestore user doc)
+  const [readingActivity, setReadingActivity] = useState<Record<string, { bookId: string; progress: number; lastRead: string }[]>>({});
 
-  // Item price overrides (admin-editable, persisted to localStorage)
-  const [itemPriceOverrides, setItemPriceOverrides] = useState<Record<string, number>>(() => {
-    try {
-      const saved = localStorage.getItem('mainwrld_item_prices');
-      return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
-  });
+  // Item price overrides (loaded from Firestore user doc, admin only)
+  const [itemPriceOverrides, setItemPriceOverrides] = useState<Record<string, number>>({});
 
   const getItemCost = (itemId: string): number => {
     if (itemId in itemPriceOverrides) return itemPriceOverrides[itemId];
@@ -815,58 +753,23 @@ const App: React.FC = () => {
   const handleUpdateItemPrice = (itemId: string, price: number) => {
     const updated = { ...itemPriceOverrides, [itemId]: price };
     setItemPriceOverrides(updated);
-    localStorage.setItem('mainwrld_item_prices', JSON.stringify(updated));
+    if (firebaseUid) fbService.updateUserProfile(firebaseUid, { itemPriceOverrides: updated }).catch(console.error);
   };
 
-  // Comments state
-  const [allComments, setAllComments] = useState<Comment[]>([
-    { id: '1', bookId: 'e1', author: 'Jemma Blair', text: 'This chapter left me speechless! The neon imagery is top-tier.', likes: 12, timestamp: '2h' },
-    { id: '2', bookId: 'e1', author: 'Marcus D.', text: 'Interesting plot twist, didn\'t see that coming.', likes: 5, timestamp: '5h' },
-  ]);
+  // Comments state (Firestore real-time)
+  const [allComments, setAllComments] = useState<Comment[]>([]);
 
     // Rewards and Cart State
   const [lastClaimedPoints, setLastClaimedPoints] = useState<number | null>(null);
 
-  // Coupons - per-user localStorage persistence
-  const [coupons, setCoupons] = useState<Coupon[]>(() => {
-    try {
-      const saved = localStorage.getItem('mainwrld_coupons');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [];
-  });
+  // Coupons (loaded from Firestore user doc)
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
 
-  // Cart - localStorage persistence
-  const [cart, setCart] = useState<Book[]>(() => {
-    try {
-      const saved = localStorage.getItem('mainwrld_cart');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [];
-  });
+  // Cart (loaded from Firestore user doc)
+  const [cart, setCart] = useState<Book[]>([]);
 
-  // Per-user book ownership and progress: { [username]: { ownedBookIds: string[], bookProgress: { [bookId]: { scrollProgress: number, chapterIndex: number } } } }
-  const [userBookData, setUserBookData] = useState<Record<string, { ownedBookIds: string[]; bookProgress: Record<string, { scrollProgress: number; chapterIndex: number }> }>>(() => {
-    try {
-      const saved = localStorage.getItem('mainwrld_user_book_data');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Migrate old format (number) to new format ({ scrollProgress, chapterIndex })
-        Object.keys(parsed).forEach(username => {
-          if (parsed[username]?.bookProgress) {
-            Object.keys(parsed[username].bookProgress).forEach(bookId => {
-              const val = parsed[username].bookProgress[bookId];
-              if (typeof val === 'number') {
-                parsed[username].bookProgress[bookId] = { scrollProgress: val, chapterIndex: 0 };
-              }
-            });
-          }
-        });
-        return parsed;
-      }
-    } catch {}
-    return {};
-  });
+  // Per-user book ownership and progress (loaded from Firestore user doc)
+  const [userBookData, setUserBookData] = useState<Record<string, { ownedBookIds: string[]; purchasedBookIds?: string[]; bookProgress: Record<string, { scrollProgress: number; chapterIndex: number }> }>>({});
 
   // Helper to get total likes for a book (handles both old number and new number[] format)
   const getTotalLikes = (likes: number | number[]): number => {
@@ -929,10 +832,17 @@ const App: React.FC = () => {
     });
   }, [user.username]);
 
-  // Persist user book data
+  // Persist user book data to Firestore
   useEffect(() => {
-    localStorage.setItem('mainwrld_user_book_data', JSON.stringify(userBookData));
-  }, [userBookData]);
+    if (!firebaseUid || !user.username) return;
+    const ud = userBookData[user.username];
+    if (!ud) return;
+    fbService.updateUserProfile(firebaseUid, {
+      ownedBookIds: ud.ownedBookIds || [],
+      purchasedBookIds: (ud as any).purchasedBookIds || [],
+      bookProgress: ud.bookProgress || {},
+    }).catch(console.error);
+  }, [userBookData, firebaseUid, user.username]);
 
   // Publishing temp state
   const [currentPublishingContent, setCurrentPublishingContent] = useState('');
@@ -976,104 +886,117 @@ const App: React.FC = () => {
     fbService.getAllUsers().then((users: any[]) => setRegisteredUsers(users)).catch(console.error);
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem('mainwrld_reports', JSON.stringify(reports));
-  }, [reports]);
+  // ===== FIRESTORE REAL-TIME SUBSCRIPTIONS =====
 
-  // Load likedBooks from localStorage whenever username changes
+  // Subscribe to relationships
   useEffect(() => {
-    try {
-      const key = `mainwrld_liked_books_${user.username}`;
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        setLikedBooks(new Set(JSON.parse(saved)));
-      } else {
-        setLikedBooks(new Set());
-      }
-      // Reset interaction flag on user change so we don't save stale data
+    const unsub = fbService.subscribeToRelationships((rels: any[]) => {
+      setRelationships(rels.map(r => ({ admirer: r.admirer, target: r.target, timestamp: r.timestamp })));
+    });
+    return () => unsub();
+  }, []);
+
+  // Subscribe to chat messages
+  useEffect(() => {
+    const unsub = fbService.subscribeToChatMessages((msgs: any[]) => {
+      setChatMessages(msgs.map(m => ({ id: m.id, from: m.from, to: m.to, text: m.text, timestamp: m.timestamp, read: m.read })));
+    });
+    return () => unsub();
+  }, []);
+
+  // Subscribe to notifications
+  useEffect(() => {
+    const unsub = fbService.subscribeToNotifications((notifs: any[]) => {
+      setNotifications(notifs.map(n => ({
+        id: n.id, title: n.title, message: n.message, icon: n.icon,
+        timestamp: n.timestamp ? new Date(n.timestamp) : new Date(),
+        recipient: n.recipient, sender: n.sender, read: n.read
+      })));
+    });
+    return () => unsub();
+  }, []);
+
+  // Subscribe to comments
+  useEffect(() => {
+    const unsub = fbService.subscribeToComments((comments: any[]) => {
+      setAllComments(comments.map(c => ({
+        id: c.id, bookId: c.bookId, chapterIndex: c.chapterIndex,
+        author: c.author, authorUsername: c.authorUsername, text: c.text,
+        likes: c.likes || 0, likedBy: c.likedBy || [], timestamp: c.timestamp || 'Now'
+      })));
+    });
+    return () => unsub();
+  }, []);
+
+  // Subscribe to reports
+  useEffect(() => {
+    const unsub = fbService.subscribeToReports((reps: any[]) => {
+      setReports(reps.map(r => ({
+        id: r.id, type: r.type, targetId: r.targetId,
+        reportedBy: r.reportedBy, timestamp: r.timestamp, status: r.status
+      })));
+    });
+    return () => unsub();
+  }, []);
+
+  // Load user-specific data from Firestore when user logs in
+  useEffect(() => {
+    if (!firebaseUid || !user.username) return;
+    fbService.getUserProfile(firebaseUid).then((profile: any) => {
+      if (!profile) return;
+      // Load likedBooks
+      if (profile.likedBooks) setLikedBooks(new Set(profile.likedBooks));
+      else setLikedBooks(new Set());
       likedBooksInteracted.current = false;
-    } catch { /* ignore */ }
-  }, [user.username]);
+      // Load blocked users
+      if (profile.blockedUsers) setBlockedUsers(new Set(profile.blockedUsers));
+      // Load avatar config
+      if (profile.avatarConfig) setAllAvatarConfigs(prev => ({ ...prev, [user.username]: profile.avatarConfig }));
+      // Load unlocked items
+      if (profile.unlockedItems) setAllUnlockedItems(prev => ({ ...prev, [user.username]: profile.unlockedItems }));
+      // Load user book data
+      if (profile.ownedBookIds || profile.bookProgress || profile.purchasedBookIds) {
+        setUserBookData(prev => ({
+          ...prev,
+          [user.username]: {
+            ownedBookIds: profile.ownedBookIds || [],
+            purchasedBookIds: profile.purchasedBookIds || [],
+            bookProgress: profile.bookProgress || {},
+          }
+        }));
+      }
+      // Load reading activity
+      if (profile.readingActivity) setReadingActivity(prev => ({ ...prev, [user.username]: profile.readingActivity }));
+      // Load coupons
+      if (profile.coupons) setCoupons(profile.coupons);
+      // Load cart (stored as full book objects)
+      if (profile.cart) setCart(profile.cart);
+      // Load item price overrides
+      if (profile.itemPriceOverrides) setItemPriceOverrides(profile.itemPriceOverrides);
+    }).catch(console.error);
+  }, [firebaseUid, user.username]);
 
-  // Save likedBooks to localStorage only after user has actually liked/unliked
+  // Save likedBooks to Firestore after user interaction
   useEffect(() => {
-    if (likedBooksInteracted.current) {
-      localStorage.setItem(`mainwrld_liked_books_${user.username}`, JSON.stringify(Array.from(likedBooks)));
+    if (likedBooksInteracted.current && firebaseUid) {
+      fbService.updateUserProfile(firebaseUid, { likedBooks: Array.from(likedBooks) }).catch(console.error);
     }
   }, [likedBooks]);
 
+  // Message expiry: delete messages older than 1 year from Firestore
   useEffect(() => {
-    localStorage.setItem('mainwrld_chat_messages', JSON.stringify(chatMessages));
-  }, [chatMessages]);
-
-  // Message expiry: remove messages older than 1 year (premium users keep messages forever)
-  useEffect(() => {
+    if (!user.username) return;
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-    const expired = chatMessages.filter(m => {
-      const msgDate = new Date(m.timestamp);
-      if (msgDate >= oneYearAgo) return false; // Not expired
-      // Keep if either sender or receiver is premium
-      const sender = registeredUsers.find(u => u.username === m.from);
-      const receiver = registeredUsers.find(u => u.username === m.to);
-      if ((sender?.isPremium) || (receiver?.isPremium)) return false;
-      if (m.from === user.username && user.isPremium) return false;
-      if (m.to === user.username && user.isPremium) return false;
-      return true; // Expired
-    });
-    if (expired.length > 0) {
-      const expiredIds = new Set(expired.map(m => m.id));
-      setChatMessages(prev => prev.filter(m => !expiredIds.has(m.id)));
-    }
-  }, []); // Run once on mount
+    fbService.deleteChatMessagesOlderThan(oneYearAgo.toISOString()).catch(console.error);
+  }, []);
 
-  // Mark messages as read when viewing a chat conversation
+  // Mark messages as read when viewing a chat conversation (writes to Firestore)
   useEffect(() => {
-    if (view === 'chat-conversation' && selectedChatUser) {
-      const hasUnread = chatMessages.some(m => m.from === selectedChatUser && m.to === user.username && !m.read);
-      if (hasUnread) {
-        setChatMessages(prev => prev.map(m =>
-          m.from === selectedChatUser && m.to === user.username && !m.read
-            ? { ...m, read: true }
-            : m
-        ));
-      }
+    if (view === 'chat-conversation' && selectedChatUser && user.username) {
+      fbService.markMessagesRead(selectedChatUser, user.username).catch(console.error);
     }
   }, [view, selectedChatUser]);
-
-  useEffect(() => {
-    localStorage.setItem('mainwrld_relationships', JSON.stringify(relationships));
-  }, [relationships]);
-
-  useEffect(() => {
-    localStorage.setItem('mainwrld_notifications', JSON.stringify(notifications));
-  }, [notifications]);
-
-  useEffect(() => {
-    localStorage.setItem('mainwrld_avatars', JSON.stringify(allAvatarConfigs));
-  }, [allAvatarConfigs]);
-
-  // Persist coupons
-  useEffect(() => {
-    localStorage.setItem('mainwrld_coupons', JSON.stringify(coupons));
-  }, [coupons]);
-
-  // Persist cart
-  useEffect(() => {
-    localStorage.setItem('mainwrld_cart', JSON.stringify(cart));
-  }, [cart]);
-
-  useEffect(() => {
-    localStorage.setItem('mainwrld_avatar_unlocked_all', JSON.stringify(allUnlockedItems));
-  }, [allUnlockedItems]);
-
-  useEffect(() => {
-    localStorage.setItem('mainwrld_blocked', JSON.stringify([...blockedUsers]));
-  }, [blockedUsers]);
-
-  useEffect(() => {
-    localStorage.setItem('mainwrld_reading_activity', JSON.stringify(readingActivity));
-  }, [readingActivity]);
 
   // Persist user state to Firestore whenever it changes
   useEffect(() => {
@@ -1084,9 +1007,51 @@ const App: React.FC = () => {
         strikes: user.strikes,
         admirersCount: user.admirersCount,
         mutualsCount: user.mutualsCount,
+        isPremium: user.isPremium || false,
       }).catch(console.error);
     }
-  }, [user.points, user.username, user.displayName, view, firebaseUid]);
+  }, [user.points, user.username, user.displayName, user.isPremium, view, firebaseUid]);
+
+  // Persist avatar config to Firestore
+  useEffect(() => {
+    if (!firebaseUid || !user.username) return;
+    const cfg = allAvatarConfigs[user.username];
+    if (cfg) fbService.updateUserProfile(firebaseUid, { avatarConfig: cfg }).catch(console.error);
+  }, [allAvatarConfigs, firebaseUid, user.username]);
+
+  // Persist unlocked items to Firestore
+  useEffect(() => {
+    if (!firebaseUid || !user.username) return;
+    const items = allUnlockedItems[user.username];
+    if (items) fbService.updateUserProfile(firebaseUid, { unlockedItems: items }).catch(console.error);
+  }, [allUnlockedItems, firebaseUid, user.username]);
+
+  // Persist blocked users to Firestore
+  useEffect(() => {
+    if (!firebaseUid || !user.username) return;
+    fbService.updateUserProfile(firebaseUid, { blockedUsers: [...blockedUsers] }).catch(console.error);
+  }, [blockedUsers, firebaseUid, user.username]);
+
+  // Persist reading activity to Firestore
+  useEffect(() => {
+    if (!firebaseUid || !user.username) return;
+    const activity = readingActivity[user.username];
+    if (activity) fbService.updateUserProfile(firebaseUid, { readingActivity: activity }).catch(console.error);
+  }, [readingActivity, firebaseUid, user.username]);
+
+  // Persist coupons to Firestore
+  useEffect(() => {
+    if (!firebaseUid || !user.username) return;
+    fbService.updateUserProfile(firebaseUid, { coupons }).catch(console.error);
+  }, [coupons, firebaseUid, user.username]);
+
+  // Persist cart to Firestore
+  useEffect(() => {
+    if (!firebaseUid || !user.username) return;
+    // Store simplified cart (essential fields only) to keep document small
+    const cartData = cart.map(b => ({ id: b.id, title: b.title, price: b.price, coverColor: b.coverColor, coverImage: b.coverImage }));
+    fbService.updateUserProfile(firebaseUid, { cart: cartData }).catch(console.error);
+  }, [cart, firebaseUid, user.username]);
 
   // Handle Stripe payment redirects and pending purchases - only after user is loaded
   useEffect(() => {
@@ -1208,16 +1173,17 @@ const App: React.FC = () => {
   }, []);
 
   const addNotification = useCallback((title: string, message: string, icon: string, recipient?: string, sender?: string) => {
-    const newNotif: NotificationItem = {
+    const newNotif = {
       id: Math.random().toString(36).substr(2, 9),
       title,
       message,
       icon,
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       recipient: recipient || user.username,
-      sender: sender || user.username
+      sender: sender || user.username,
+      read: false,
     };
-    setNotifications(prev => [newNotif, ...prev]);
+    fbService.addNotificationDoc(newNotif).catch(console.error);
   }, [user.username]);
 
   const handleLogout = async () => {
@@ -1338,15 +1304,8 @@ const App: React.FC = () => {
       showToast('Your message contains inappropriate language.', 'warning');
       return;
     }
-    const msg: ChatMessage = {
-      id: Math.random().toString(36).substr(2, 9),
-      from: user.username,
-      to: toUsername,
-      text: text.trim(),
-      timestamp: new Date().toISOString(),
-      read: false,
-    };
-    setChatMessages(prev => [...prev, msg]);
+    // Write to Firestore — real-time subscription will update local state
+    fbService.sendChatMessage(user.username, toUsername, text.trim()).catch(console.error);
     // Send notification to recipient
     const recipientUser = registeredUsers.find(u => u.username === toUsername) || MUTUALS.find(u => u.username === toUsername);
     if (recipientUser) {
@@ -1404,26 +1363,21 @@ const App: React.FC = () => {
           cancelLabel: 'Cancel',
           icon: 'people_outline',
           onConfirm: () => {
-            setRelationships(prev => prev.filter(r => !(r.admirer === user.username && r.target === targetUser.username)));
+            fbService.removeRelationship(user.username, targetUser.username).catch(console.error);
             showToast('You are no longer mutuals', 'people_outline');
           },
           onCancel: () => {}
         });
       } else {
         // Not mutuals, just un-admire silently
-        setRelationships(prev => prev.filter(r => !(r.admirer === user.username && r.target === targetUser.username)));
+        fbService.removeRelationship(user.username, targetUser.username).catch(console.error);
         showToast('Stopped admiring', 'person_remove');
       }
       return;
     }
 
-    // Add admire relationship
-    const newRelationship: Relationship = {
-      admirer: user.username,
-      target: targetUser.username,
-      timestamp: new Date().toISOString()
-    };
-    setRelationships(prev => [...prev, newRelationship]);
+    // Add admire relationship to Firestore
+    fbService.addRelationship(user.username, targetUser.username).catch(console.error);
 
     // Notify the target user they have a new admirer
     addNotification('New Admirer', `${user.displayName} is now admiring you!`, 'person_add', targetUser.username);
@@ -1437,7 +1391,7 @@ const App: React.FC = () => {
   };
 
   const handleReport = (type: 'Book' | 'Comment' | 'User', targetId: string) => {
-    const newReport: Report = {
+    const newReport = {
       id: Math.random().toString(36).substr(2, 9),
       type,
       targetId,
@@ -1445,60 +1399,77 @@ const App: React.FC = () => {
       timestamp: new Date().toISOString(),
       status: 'pending',
     };
-    setReports(prev => [newReport, ...prev]);
+    fbService.addReportDoc(newReport).catch(console.error);
     addNotification('Report Filed', `Your report for ${type.toLowerCase()} has been submitted.`, 'flag');
     showToast(`${type} reported successfully!`, 'flag');
   };
 
   const handleRemoveBook = (bookId: string) => {
-    setBooks(prev => prev.filter(b => b.id !== bookId));
-    setReports(prev => prev.map(r =>
-      r.targetId === bookId && r.type === 'Book' ? { ...r, status: 'resolved' as const } : r
-    ));
+    fbService.deleteBook(bookId).catch(console.error);
+    reports.filter(r => r.targetId === bookId && r.type === 'Book').forEach(r => {
+      fbService.updateReportStatus(r.id, 'resolved').catch(console.error);
+    });
   };
 
   const handleRemoveComment = (commentId: string) => {
-    setAllComments(prev => prev.filter(c => c.id !== commentId));
-    setReports(prev => prev.map(r =>
-      r.targetId === commentId && r.type === 'Comment' ? { ...r, status: 'resolved' as const } : r
-    ));
+    fbService.removeCommentDoc(commentId).catch(console.error);
+    // Resolve any reports for this comment
+    reports.filter(r => r.targetId === commentId && r.type === 'Comment').forEach(r => {
+      fbService.updateReportStatus(r.id, 'resolved').catch(console.error);
+    });
   };
 
   const handleAddStrike = (username: string) => {
+    const targetUser = registeredUsers.find(u => u.username === username);
+    if (targetUser?.uid) {
+      fbService.updateUserProfile(targetUser.uid, { strikes: (targetUser.strikes || 0) + 1 }).catch(console.error);
+    }
     setRegisteredUsers(prev => prev.map(u =>
-      u.username === username ? { ...u, strikes: u.strikes + 1 } : u
+      u.username === username ? { ...u, strikes: (u.strikes || 0) + 1 } : u
     ));
   };
 
   const handleRemoveStrike = (username: string) => {
+    const targetUser = registeredUsers.find(u => u.username === username);
+    if (targetUser?.uid && targetUser.strikes > 0) {
+      fbService.updateUserProfile(targetUser.uid, { strikes: targetUser.strikes - 1 }).catch(console.error);
+    }
     setRegisteredUsers(prev => prev.map(u =>
       u.username === username && u.strikes > 0 ? { ...u, strikes: u.strikes - 1 } : u
     ));
   };
 
   const handleBanUser = (username: string) => {
+    // Remove user's comments from Firestore
+    fbService.removeCommentsByAuthor(username).catch(console.error);
+    // Remove user's relationships from Firestore
+    fbService.removeAllRelationshipsForUser(username).catch(console.error);
+    // Resolve reports for this user
+    reports.filter(r => r.targetId === username && r.type === 'User').forEach(r => {
+      fbService.updateReportStatus(r.id, 'resolved').catch(console.error);
+    });
+    // Delete user's books from Firestore
+    books.filter(b => b.author.username === username).forEach(b => {
+      fbService.deleteBook(b.id).catch(console.error);
+    });
+    // Note: User account deletion from Firebase Auth would require admin SDK
+    // For now, just update their profile with a banned flag
+    const bannedUser = registeredUsers.find(u => u.username === username);
+    if (bannedUser?.uid) {
+      fbService.updateUserProfile(bannedUser.uid, { isBanned: true }).catch(console.error);
+    }
     setRegisteredUsers(prev => prev.filter(u => u.username !== username));
-    setBooks(prev => prev.filter(b => b.author.username !== username));
-    setAllComments(prev => prev.filter(c => c.author !== username));
-    setReports(prev => prev.map(r =>
-      r.targetId === username && r.type === 'User' ? { ...r, status: 'resolved' as const } : r
-    ));
   };
 
   const handleDismissReport = (reportId: string) => {
-    setReports(prev => prev.map(r =>
-      r.id === reportId ? { ...r, status: 'dismissed' as const } : r
-    ));
+    fbService.updateReportStatus(reportId, 'dismissed').catch(console.error);
   };
 
   const handleBlockUser = (targetUsername: string) => {
     if (targetUsername === user.username) return; // Can't block yourself
     setBlockedUsers(prev => new Set([...prev, targetUsername]));
-    // Remove any admire relationships in both directions
-    setRelationships(prev => prev.filter(r =>
-      !(r.admirer === user.username && r.target === targetUsername) &&
-      !(r.admirer === targetUsername && r.target === user.username)
-    ));
+    // Remove any admire relationships in both directions via Firestore
+    fbService.removeRelationshipsBetween(user.username, targetUsername).catch(console.error);
     addNotification('User Blocked', `You blocked @${targetUsername}. You will no longer see their content.`, 'block');
     setView('home');
   };
@@ -1894,17 +1865,19 @@ const handleSpinWheel = () => {
     return;
   }
 
-  const newComment: Comment = {
+  const newComment = {
     id: Math.random().toString(36).substr(2, 9),
     bookId: selectedBook.id,
     chapterIndex,
     author: user.displayName,
+    authorUsername: user.username,
     text,
     likes: 0,
-    timestamp: 'Now'
+    likedBy: [] as string[],
+    timestamp: new Date().toISOString()
   };
 
-  setAllComments(prev => [newComment, ...prev]);
+  fbService.addCommentDoc(newComment).catch(console.error);
 
   const chapterName = chapterIndex !== undefined && selectedBook.chapters?.[chapterIndex]
     ? ` (${selectedBook.chapters[chapterIndex].title})`
@@ -1922,23 +1895,16 @@ const handleSpinWheel = () => {
 
 
   const handleLikeComment = (commentId: string) => {
-      setAllComments(prev => prev.map(c => {
-          if (c.id === commentId) {
-              // Check if user already liked this comment
-              const likedBy = c.likedBy || [];
-              if (likedBy.includes(user.username)) {
-                  // User already liked - do nothing (or could toggle unlike)
-                  return c;
-              }
-              const updated = { ...c, likes: c.likes + 1, likedBy: [...likedBy, user.username] };
-              // Find the comment author's username from registeredUsers or MUTUALS
-              const commentAuthorUser = registeredUsers.find(u => u.displayName === c.author) || MUTUALS.find(u => u.displayName === c.author);
-              const recipientUsername = commentAuthorUser?.username || c.author;
-              addNotification('Comment Liked', `${user.displayName} liked your comment: "${c.text.substring(0, 20)}..."`, 'favorite_border', recipientUsername);
-              return updated;
-          }
-          return c;
-      }));
+      const comment = allComments.find(c => c.id === commentId);
+      if (!comment) return;
+      const likedBy = comment.likedBy || [];
+      if (likedBy.includes(user.username)) return; // Already liked
+      fbService.updateComment(commentId, {
+        likes: comment.likes + 1,
+        likedBy: [...likedBy, user.username]
+      }).catch(console.error);
+      const recipientUsername = (comment as any).authorUsername || comment.author;
+      addNotification('Comment Liked', `${user.displayName} liked your comment: "${comment.text.substring(0, 20)}..."`, 'favorite_border', recipientUsername);
   };
 
   const handleBookProgressUpdate = (bookId: string, scrollProgress: number, chapterIndex: number) => {
@@ -2555,9 +2521,9 @@ const handleSpinWheel = () => {
 
 
       case 'notifications':
-        // Mark all notifications as read when viewing
+        // Mark all notifications as read when viewing (via Firestore)
         if (notifications.some(n => n.recipient === user.username && !n.read)) {
-          setTimeout(() => setNotifications(prev => prev.map(n => n.recipient === user.username ? { ...n, read: true } : n)), 500);
+          setTimeout(() => fbService.markNotificationsRead(user.username).catch(console.error), 500);
         }
         return (
             <div className="fixed inset-0 bg-white overflow-y-auto no-scrollbar animate-in slide-in-from-right duration-500">

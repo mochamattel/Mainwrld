@@ -19,9 +19,12 @@ import {
   onSnapshot,
   query,
   where,
+  orderBy,
+  addDoc,
   serverTimestamp,
   type DocumentData,
-  type QuerySnapshot
+  type QuerySnapshot,
+  type Unsubscribe as FsUnsubscribe
 } from 'firebase/firestore';
 
 // ==================== AUTH FUNCTIONS ====================
@@ -190,5 +193,148 @@ export const subscribeToBooksChanges = (
   return onSnapshot(collection(db, 'books'), (snapshot: QuerySnapshot) => {
     const books = snapshot.docs.map(d => d.data());
     callback(books);
+  });
+};
+
+// ==================== RELATIONSHIPS ====================
+
+export const addRelationship = async (admirer: string, target: string) => {
+  await addDoc(collection(db, 'relationships'), {
+    admirer,
+    target,
+    timestamp: new Date().toISOString()
+  });
+};
+
+export const removeRelationship = async (admirer: string, target: string) => {
+  const q = query(collection(db, 'relationships'), where('admirer', '==', admirer), where('target', '==', target));
+  const snapshot = await getDocs(q);
+  for (const d of snapshot.docs) await deleteDoc(d.ref);
+};
+
+export const removeAllRelationshipsForUser = async (username: string) => {
+  // Remove where user is admirer
+  const q1 = query(collection(db, 'relationships'), where('admirer', '==', username));
+  const s1 = await getDocs(q1);
+  for (const d of s1.docs) await deleteDoc(d.ref);
+  // Remove where user is target
+  const q2 = query(collection(db, 'relationships'), where('target', '==', username));
+  const s2 = await getDocs(q2);
+  for (const d of s2.docs) await deleteDoc(d.ref);
+};
+
+export const removeRelationshipsBetween = async (user1: string, user2: string) => {
+  await removeRelationship(user1, user2);
+  await removeRelationship(user2, user1);
+};
+
+export const subscribeToRelationships = (callback: (rels: any[]) => void): Unsubscribe => {
+  return onSnapshot(collection(db, 'relationships'), (snapshot: QuerySnapshot) => {
+    callback(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+  });
+};
+
+// ==================== CHAT MESSAGES ====================
+
+export const sendChatMessage = async (from: string, to: string, text: string) => {
+  const msg = {
+    id: Math.random().toString(36).substr(2, 9),
+    from,
+    to,
+    text,
+    timestamp: new Date().toISOString(),
+    read: false
+  };
+  await addDoc(collection(db, 'chatMessages'), msg);
+  return msg;
+};
+
+export const markMessagesRead = async (from: string, to: string) => {
+  const q = query(collection(db, 'chatMessages'), where('from', '==', from), where('to', '==', to));
+  const snapshot = await getDocs(q);
+  for (const d of snapshot.docs) {
+    if (!d.data().read) await updateDoc(d.ref, { read: true });
+  }
+};
+
+export const deleteChatMessagesOlderThan = async (cutoffDate: string) => {
+  const q = query(collection(db, 'chatMessages'));
+  const snapshot = await getDocs(q);
+  for (const d of snapshot.docs) {
+    if (d.data().timestamp < cutoffDate) await deleteDoc(d.ref);
+  }
+};
+
+export const subscribeToChatMessages = (callback: (msgs: any[]) => void): Unsubscribe => {
+  return onSnapshot(collection(db, 'chatMessages'), (snapshot: QuerySnapshot) => {
+    callback(snapshot.docs.map(d => ({ ...d.data() })));
+  });
+};
+
+// ==================== NOTIFICATIONS ====================
+
+export const addNotificationDoc = async (notif: any) => {
+  await addDoc(collection(db, 'notifications'), notif);
+};
+
+export const markNotificationsRead = async (recipientUsername: string) => {
+  const q = query(collection(db, 'notifications'), where('recipient', '==', recipientUsername));
+  const snapshot = await getDocs(q);
+  for (const d of snapshot.docs) {
+    if (!d.data().read) await updateDoc(d.ref, { read: true });
+  }
+};
+
+export const subscribeToNotifications = (callback: (notifs: any[]) => void): Unsubscribe => {
+  return onSnapshot(collection(db, 'notifications'), (snapshot: QuerySnapshot) => {
+    callback(snapshot.docs.map(d => ({ ...d.data() })));
+  });
+};
+
+// ==================== COMMENTS ====================
+
+export const addCommentDoc = async (comment: any) => {
+  await addDoc(collection(db, 'comments'), comment);
+};
+
+export const updateComment = async (commentId: string, data: any) => {
+  const q = query(collection(db, 'comments'), where('id', '==', commentId));
+  const snapshot = await getDocs(q);
+  if (!snapshot.empty) await updateDoc(snapshot.docs[0].ref, data);
+};
+
+export const removeCommentDoc = async (commentId: string) => {
+  const q = query(collection(db, 'comments'), where('id', '==', commentId));
+  const snapshot = await getDocs(q);
+  if (!snapshot.empty) await deleteDoc(snapshot.docs[0].ref);
+};
+
+export const removeCommentsByAuthor = async (authorUsername: string) => {
+  const q = query(collection(db, 'comments'), where('authorUsername', '==', authorUsername));
+  const snapshot = await getDocs(q);
+  for (const d of snapshot.docs) await deleteDoc(d.ref);
+};
+
+export const subscribeToComments = (callback: (comments: any[]) => void): Unsubscribe => {
+  return onSnapshot(collection(db, 'comments'), (snapshot: QuerySnapshot) => {
+    callback(snapshot.docs.map(d => ({ ...d.data() })));
+  });
+};
+
+// ==================== REPORTS ====================
+
+export const addReportDoc = async (report: any) => {
+  await addDoc(collection(db, 'reports'), report);
+};
+
+export const updateReportStatus = async (reportId: string, status: string) => {
+  const q = query(collection(db, 'reports'), where('id', '==', reportId));
+  const snapshot = await getDocs(q);
+  if (!snapshot.empty) await updateDoc(snapshot.docs[0].ref, { status });
+};
+
+export const subscribeToReports = (callback: (reports: any[]) => void): Unsubscribe => {
+  return onSnapshot(collection(db, 'reports'), (snapshot: QuerySnapshot) => {
+    callback(snapshot.docs.map(d => ({ ...d.data() })));
   });
 };
