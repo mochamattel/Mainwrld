@@ -232,7 +232,7 @@ const GENRE_LIST = ['Mystery', 'Sci-Fi', 'Romance', 'Horror', 'Dystopian', 'Fant
 const ADMIN_USERNAMES = ['admin', 'mochamattel'];
 
 // Bad words filter for usernames and display names
-const BAD_WORDS = ['fuck','shit','ass','bitch','dick','cock','pussy','damn','bastard','slut','whore','cunt','nigger','nigga','fag','faggot','retard','rape','penis','vagina','anal','porn','hentai','cum','jizz','dildo','nude','naked','sex','xxx','tits','boob','kys','kms','stfu'];
+const BAD_WORDS = ['fuck','cock','pussy','slut','whore','cunt','nigger','nigga','fag','faggot','retard','rape','anal','porn','hentai','cum','jizz','dildo','xxx','tits','kys','kms','stfu', 'penis'];
 const containsBadWord = (text: string): boolean => {
   const lower = text.toLowerCase().replace(/[^a-z]/g, '');
   return BAD_WORDS.some(word => lower.includes(word));
@@ -2141,23 +2141,23 @@ const handleSpinWheel = () => {
                 </div>
               </div>
 
-              {/* Premium Membership */}
+             {/* Premium Membership */}
               <div className="w-full">
                 <div className="p-8 bg-gradient-to-br from-amber-50 to-orange-50 rounded-[2.5rem] border border-amber-200 flex flex-col items-center gap-6 shadow-sm relative overflow-hidden">
                   <div className="absolute top-4 right-4">
                     <span className="material-icons-round text-amber-300 text-4xl">workspace_premium</span>
                   </div>
                   <div className="text-center relative z-10">
-                    <h3 className="text-lg font-bold text-amber-900">MainWRLD Premium</h3>
+                    <h3 className="text-lg font-bold text-amber-900">MainWrld+</h3>
                     <p className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">
-                      {user.isPremium ? 'Active Subscription' : '$4.99/month'}
+                      {user.isPremium ? 'Active Subscription' : '$30 a year'}
                     </p>
                   </div>
                   {user.isPremium ? (
                     <div className="w-full space-y-3">
                       <div className="flex items-center gap-2 text-amber-700">
                         <span className="material-icons-round text-sm">check_circle</span>
-                        <span className="text-xs font-bold">Ad-free reading experience</span>
+                        <span className="text-xs font-bold">No More Ads</span>
                       </div>
                       <div className="flex items-center gap-2 text-amber-700">
                         <span className="material-icons-round text-sm">check_circle</span>
@@ -2165,11 +2165,15 @@ const handleSpinWheel = () => {
                       </div>
                       <div className="flex items-center gap-2 text-amber-700">
                         <span className="material-icons-round text-sm">check_circle</span>
-                        <span className="text-xs font-bold">Premium badge on profile</span>
+                        <span className="text-xs font-bold">Compete in MainWrld book contests</span>
                       </div>
                       <div className="flex items-center gap-2 text-amber-700">
                         <span className="material-icons-round text-sm">check_circle</span>
-                        <span className="text-xs font-bold">Priority monetization review</span>
+                        <span className="text-xs font-bold">Save Chat Messages Forever</span>
+                      </div>
+                       <div className="flex items-center gap-2 text-amber-700">
+                        <span className="material-icons-round text-sm">check_circle</span>
+                        <span className="text-xs font-bold">Annual 200 Point Bonus</span>
                       </div>
                       <div className="pt-3 text-center">
                         <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest">
@@ -2182,20 +2186,24 @@ const handleSpinWheel = () => {
                       <div className="w-full space-y-3">
                         <div className="flex items-center gap-2 text-amber-700">
                           <span className="material-icons-round text-sm">auto_awesome</span>
-                          <span className="text-xs font-bold">Ad-free reading experience</span>
+                          <span className="text-xs font-bold">No More Ads</span>
                         </div>
                         <div className="flex items-center gap-2 text-amber-700">
                           <span className="material-icons-round text-sm">auto_awesome</span>
                           <span className="text-xs font-bold">2x daily points (6 pts/day)</span>
                         </div>
                         <div className="flex items-center gap-2 text-amber-700">
-                          <span className="material-icons-round text-sm">auto_awesome</span>
-                          <span className="text-xs font-bold">Premium badge on profile</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-amber-700">
-                          <span className="material-icons-round text-sm">auto_awesome</span>
-                          <span className="text-xs font-bold">Priority monetization review</span>
-                        </div>
+                        <span className="material-icons-round text-sm">auto_awesome</span>
+                        <span className="text-xs font-bold">Compete in MainWRLD book contests</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-amber-700">
+                        <span className="material-icons-round text-sm">auto_awesome</span>
+                        <span className="text-xs font-bold">Save Chat Messages Forever</span>
+                      </div>
+                       <div className="flex items-center gap-2 text-amber-700">
+                        <span className="material-icons-round text-sm">auto_awesome</span>
+                        <span className="text-xs font-bold">Annual 200 Point Bonus</span>
+                      </div>
                       </div>
                       <Button className="w-full h-16 bg-amber-500 hover:bg-amber-600" onClick={() => {
                         if (STRIPE_PREMIUM_PAYMENT_LINK && !STRIPE_PREMIUM_PAYMENT_LINK.includes('test_premium')) {
@@ -2204,18 +2212,18 @@ const handleSpinWheel = () => {
                         } else {
                           showConfirm({
                             title: 'Upgrade to Premium',
-                            message: 'Subscribe to MainWRLD Premium for $4.99/month?',
+                            message: 'Subscribe to MainWrld+ for $30/year?',
                             confirmLabel: 'Subscribe',
                             cancelLabel: 'Maybe Later',
                             icon: 'workspace_premium',
                             onConfirm: () => {
                               setUser(prev => ({ ...prev, isPremium: true, premiumSince: new Date().toISOString() }));
-                              showToast('Welcome to MainWRLD Premium!', 'workspace_premium');
+                              showToast('Welcome to MainWrld+!', 'workspace_premium');
                             },
                           });
                         }
                       }}>
-                        Subscribe — $4.99/mo
+                        Subscribe — $30/yr
                       </Button>
                       <p className="text-[8px] text-amber-400 text-center font-bold uppercase tracking-widest flex items-center justify-center gap-1">
                         <span className="material-icons-round text-[10px]">lock</span> Secured by Stripe • Cancel anytime
