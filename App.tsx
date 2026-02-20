@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } fr
 import * as THREE from 'three';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Html, Environment, PerspectiveCamera, useGLTF } from '@react-three/drei';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './firebase';
+import * as fbService from './firebaseService';
 
 /**
  * MainWrld- Full Integrated Creator & Reader Platform
@@ -232,7 +235,7 @@ const GENRE_LIST = ['Mystery', 'Sci-Fi', 'Romance', 'Horror', 'Dystopian', 'Fant
 const ADMIN_USERNAMES = ['admin', 'mochamattel'];
 
 // Bad words filter for usernames and display names
-const BAD_WORDS = ['fuck','cock','pussy','slut','whore','cunt','nigger','nigga','fag','faggot','retard','rape','anal','porn','hentai','cum','jizz','dildo','xxx','tits','kys','kms','stfu', 'penis'];
+const BAD_WORDS = ['fuck','shit','ass','bitch','dick','cock','pussy','damn','bastard','slut','whore','cunt','nigger','nigga','fag','faggot','retard','rape','penis','vagina','anal','porn','hentai','cum','jizz','dildo','nude','naked','sex','xxx','tits','boob','kys','kms','stfu'];
 const containsBadWord = (text: string): boolean => {
   const lower = text.toLowerCase().replace(/[^a-z]/g, '');
   return BAD_WORDS.some(word => lower.includes(word));
@@ -658,35 +661,11 @@ const App: React.FC = () => {
   const showConfirm = useCallback((opts: { title: string; message: string; confirmLabel?: string; cancelLabel?: string; icon?: string; iconBg?: string; onConfirm: () => void; onCancel?: () => void }) => {
     setConfirmModal(opts);
   }, []);
-  const [user, setUser] = useState<User>(CURRENT_USER_MOCK);
-  const [books, setBooks] = useState<Book[]>(() => {
-    try {
-      const saved = localStorage.getItem('mainwrld_books');
-      if (saved) {
-        const parsed = JSON.parse(saved) as Book[];
-        // Merge: keep saved books + add any INITIAL_BOOKS not already present
-        // Also ensure all books have a price (default to 9.99 if missing)
-        const booksWithPrices = parsed.map(b => {
-          const initialBook = INITIAL_BOOKS.find(ib => ib.id === b.id);
-          // Migrate likes from number to number[] if needed
-          const chapterCount = b.chapters?.length || b.chaptersCount || 1;
-          let likes = b.likes;
-          if (!Array.isArray(likes)) {
-            const arr = new Array(chapterCount).fill(0);
-            arr[0] = likes || 0;
-            likes = arr;
-          } else {
-            while (likes.length < chapterCount) likes.push(0);
-          }
-          return { ...b, price: b.price ?? initialBook?.price ?? 9.99, likes };
-        });
-        const savedIds = new Set(booksWithPrices.map(b => b.id));
-        const missing = INITIAL_BOOKS.filter(b => !savedIds.has(b.id));
-        return [...booksWithPrices, ...missing];
-      }
-    } catch {}
-    return INITIAL_BOOKS;
-  });
+  const BLANK_USER: User = { username: '', displayName: '', isOnline: false, activity: 'Idle', position: [0,0,0], isMutual: false, points: 0, admirersCount: 0, mutualsCount: 0, strikes: 0 };
+  const [user, setUser] = useState<User>(BLANK_USER);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
+  const [books, setBooks] = useState<Book[]>([]);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [readingChapterIndex, setReadingChapterIndex] = useState(0);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
@@ -703,22 +682,14 @@ const App: React.FC = () => {
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Persistence for user simulation
-  const ADMIN_USER: UserRecord = { username: 'admin', displayName: 'Admin', isOnline: true, activity: 'Idle', position: [0, 0, 0], isMutual: false, points: 9999, admirersCount: 0, mutualsCount: 0, strikes: 0, password: 'aDm.PasSW-123'};
-  const [registeredUsers, setRegisteredUsers] = useState<UserRecord[]>(() => {
-    const saved = localStorage.getItem('mainwrld_users');
-    const users = saved ? JSON.parse(saved) : [{ ...CURRENT_USER_MOCK, password: 'password123' }];
-    // Always ensure admin account exists
-    if (!users.some((u: UserRecord) => u.username === 'admin')) {
-      users.push(ADMIN_USER);
-    }
-    return users;
-  });
+  // Users loaded from Firestore
+  const [registeredUsers, setRegisteredUsers] = useState<any[]>([]);
 
   const isAdmin = ADMIN_USERNAMES.includes(user.username);
 
   // Check if current user is under 16 (for explicit content filtering)
   const userIsUnder16 = useMemo(() => {
+    if (!user.username) return false;
     const userRecord = registeredUsers.find(u => u.username === user.username) as any;
     if (!userRecord?.birthDate) return false;
     const birth = new Date(userRecord.birthDate);
@@ -974,13 +945,36 @@ const App: React.FC = () => {
   const [lastSelectedBookId, setLastSelectedBookId] = useState<string>('new');
   const [lastSelectedChapterIndex, setLastSelectedChapterIndex] = useState<string>('new');
 
+  // Subscribe to Firestore books in real-time
   useEffect(() => {
-    localStorage.setItem('mainwrld_books', JSON.stringify(books));
-  }, [books]);
+    const unsubscribe = fbService.subscribeToBooksChanges((firestoreBooks: any[]) => {
+      const converted = firestoreBooks.map((fb: any) => ({
+        ...fb,
+        author: {
+          username: fb.authorUsername || fb.author?.username || 'unknown',
+          displayName: fb.authorDisplayName || fb.author?.displayName || 'Unknown',
+          isOnline: false,
+          activity: 'Idle' as const,
+          position: [0, 0, 0] as [number, number, number],
+          isMutual: false,
+          points: 0,
+          admirersCount: 0,
+          mutualsCount: 0,
+          strikes: 0,
+        },
+        // Ensure likes is always an array
+        likes: Array.isArray(fb.likes) ? fb.likes : [fb.likes || 0],
+        price: fb.price ?? 0,
+      }));
+      setBooks(converted);
+    });
+    return () => unsubscribe();
+  }, []);
 
+  // Load all registered users from Firestore
   useEffect(() => {
-    localStorage.setItem('mainwrld_users', JSON.stringify(registeredUsers));
-  }, [registeredUsers]);
+    fbService.getAllUsers().then((users: any[]) => setRegisteredUsers(users)).catch(console.error);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('mainwrld_reports', JSON.stringify(reports));
@@ -1081,14 +1075,18 @@ const App: React.FC = () => {
     localStorage.setItem('mainwrld_reading_activity', JSON.stringify(readingActivity));
   }, [readingActivity]);
 
-  // Persist user state (points, displayName, email, etc.) whenever it changes
+  // Persist user state to Firestore whenever it changes
   useEffect(() => {
-    if (view !== 'splash' && view !== 'login' && view !== 'signup') {
-      localStorage.setItem('currentUser', JSON.stringify(user));
-      // Also update the user in registeredUsers so changes persist across sessions
-      setRegisteredUsers(prev => prev.map(u => u.username === user.username ? { ...u, ...user } as UserRecord : u));
+    if (view !== 'splash' && view !== 'login' && view !== 'signup' && firebaseUid && user.username) {
+      fbService.updateUserProfile(firebaseUid, {
+        points: user.points,
+        displayName: user.displayName,
+        strikes: user.strikes,
+        admirersCount: user.admirersCount,
+        mutualsCount: user.mutualsCount,
+      }).catch(console.error);
     }
-  }, [user.points, user.username, user.displayName, view]);
+  }, [user.points, user.username, user.displayName, view, firebaseUid]);
 
   // Handle Stripe payment redirects and pending purchases - only after user is loaded
   useEffect(() => {
@@ -1169,20 +1167,43 @@ const App: React.FC = () => {
     }
   }, [view]);
 
+  // Firebase Auth state listener - handles auto-login
   useEffect(() => {
     const timer = setTimeout(() => {
-      const lastLogin = localStorage.getItem('lastLogin');
-      if (lastLogin && (Date.now() - parseInt(lastLogin)) < (90 * 24 * 3600 * 1000)) {
-        const currentUserData = localStorage.getItem('currentUser');
-        if (currentUserData) {
-            setUser(JSON.parse(currentUserData));
-            setView('home');
-        } else {
+      const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (firebaseUser) {
+          try {
+            const profile = await fbService.getUserProfile(firebaseUser.uid);
+            if (profile) {
+              setUser({
+                username: (profile as any).username,
+                displayName: (profile as any).displayName,
+                isOnline: true,
+                activity: 'Idle',
+                position: [0, 0, 0],
+                isMutual: false,
+                points: (profile as any).points || 0,
+                admirersCount: (profile as any).admirersCount || 0,
+                mutualsCount: (profile as any).mutualsCount || 0,
+                strikes: (profile as any).strikes || 0,
+                isPremium: (profile as any).isPremium || false,
+                admiringCount: (profile as any).admiringCount || 0,
+              });
+              setFirebaseUid(firebaseUser.uid);
+              setView('home');
+            } else {
+              setView('login');
+            }
+          } catch {
             setView('login');
+          }
+        } else {
+          setView('login');
         }
-      }
-      else setView('login');
-    }, 1500);
+        setAuthLoading(false);
+      });
+      return () => unsubscribe();
+    }, 1500); // Keep splash screen delay
     return () => clearTimeout(timer);
   }, []);
 
@@ -1199,36 +1220,47 @@ const App: React.FC = () => {
     setNotifications(prev => [newNotif, ...prev]);
   }, [user.username]);
 
-  const handleLogout = () => { 
-    localStorage.removeItem('lastLogin'); 
-    localStorage.removeItem('currentUser');
-    setView('login'); 
+  const handleLogout = async () => {
+    try {
+      await fbService.logOut();
+    } catch {}
+    setUser(BLANK_USER);
+    setFirebaseUid(null);
+    setView('login');
   };
 
-  const handleLogin = () => {
-    const found = registeredUsers.find(u => u.username === loginForm.username && u.password === loginForm.password);
-    if (found) {
-      setUser(found);
-      localStorage.setItem('lastLogin', Date.now().toString());
-      localStorage.setItem('currentUser', JSON.stringify(found));
+  const handleLogin = async () => {
+    try {
+      const result = await fbService.logIn(loginForm.username, loginForm.password);
+      setUser({
+        username: (result as any).username,
+        displayName: (result as any).displayName,
+        isOnline: true,
+        activity: 'Idle',
+        position: [0, 0, 0],
+        isMutual: false,
+        points: (result as any).points || 0,
+        admirersCount: (result as any).admirersCount || 0,
+        mutualsCount: (result as any).mutualsCount || 0,
+        strikes: (result as any).strikes || 0,
+        isPremium: (result as any).isPremium || false,
+        admiringCount: (result as any).admiringCount || 0,
+      });
+      setFirebaseUid((result as any).uid);
       setAuthError(null);
       setView('home');
-    } else {
+    } catch (err: any) {
       setAuthError('Invalid username or password.');
     }
   };
 
-  const handleSignup = () => {
+  const handleSignup = async () => {
     const { username, displayName, password, email } = signUpForm;
 
     // Validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       setAuthError('Please enter a valid email address.');
-      return;
-    }
-    if (registeredUsers.some(u => (u as any).email === email)) {
-      setAuthError('An account with this email already exists.');
       return;
     }
     const usernameRegex = /^[a-z0-9_]{5,25}$/;
@@ -1242,12 +1274,7 @@ const App: React.FC = () => {
     }
     const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,35}$/;
     if (!passwordRegex.test(password)) {
-       setAuthError('Password must be 12-35 characters and include at least one uppercase letter, one number, and one symbol.');
-  return;
-}
-
-    if (registeredUsers.some(u => u.username === username)) {
-      setAuthError('Username already taken.');
+      setAuthError('Password must be 12-35 characters and include at least one uppercase letter, one number, and one symbol.');
       return;
     }
     if (containsBadWord(username) || containsBadWord(displayName)) {
@@ -1255,34 +1282,54 @@ const App: React.FC = () => {
       return;
     }
 
-    const newUser: UserRecord = {
-      username,
-      displayName,
-      password,
-      email,
-      birthDate: signUpForm.birthDate,
-      isOnline: true,
-      activity: 'Idle',
-      position: [0, 0, 0],
-      isMutual: false,
-      points: 50,
-      admirersCount: 0,
-      mutualsCount: 0,
-      strikes: 0,
-    } as any;
-
-    setRegisteredUsers(prev => [...prev, newUser]);
-    setUser(newUser);
-    localStorage.setItem('lastLogin', Date.now().toString());
-    localStorage.setItem('currentUser', JSON.stringify(newUser));
-    setAuthError(null);
-    setView('home');
-
-    // Send welcome email asynchronously (non-blocking)
-    if (email) {
-      sendWelcomeEmail(email, displayName, username);
+    // Check username uniqueness via Firestore
+    try {
+      const usernameAvailable = await fbService.checkUsernameAvailable(username);
+      if (!usernameAvailable) {
+        setAuthError('Username already taken.');
+        return;
+      }
+    } catch {
+      setAuthError('Unable to check username. Please try again.');
+      return;
     }
-    addNotification('Welcome to MainWRLD!', `Hey ${displayName}, start exploring stories and connecting with other readers!`, 'celebration', username);
+
+    try {
+      const result = await fbService.signUp(email, password, username, displayName, signUpForm.birthDate);
+
+      const newUser: User = {
+        username,
+        displayName,
+        isOnline: true,
+        activity: 'Idle',
+        position: [0, 0, 0],
+        isMutual: false,
+        points: 50,
+        admirersCount: 0,
+        mutualsCount: 0,
+        strikes: 0,
+      };
+
+      setUser(newUser);
+      setFirebaseUid(result.uid);
+      setAuthError(null);
+      setView('home');
+
+      // Refresh registered users list
+      fbService.getAllUsers().then((users: any[]) => setRegisteredUsers(users)).catch(console.error);
+
+      // Send welcome email asynchronously (non-blocking)
+      if (email) {
+        sendWelcomeEmail(email, displayName, username);
+      }
+      addNotification('Welcome to MainWRLD!', `Hey ${displayName}, start exploring stories and connecting with other readers!`, 'celebration', username);
+    } catch (err: any) {
+      if (err.code === 'auth/email-already-in-use') {
+        setAuthError('An account with this email already exists.');
+      } else {
+        setAuthError(err.message || 'Signup failed. Please try again.');
+      }
+    }
   };
 
   const handleSendMessage = (toUsername: string, text: string) => {
@@ -1307,40 +1354,40 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLike = (bookId: string, chapterIndex: number = 0) => {
+  const handleLike = async (bookId: string, chapterIndex: number = 0) => {
     likedBooksInteracted.current = true;
     const likeKey = `${bookId}:${chapterIndex}`;
     const isLiked = likedBooks.has(likeKey);
+
+    const targetBook = books.find(b => b.id === bookId);
+    if (!targetBook) return;
+
+    const chLikes = getChapterLikes(targetBook.likes, (targetBook.chapters?.length || 1));
+
     if (isLiked) {
       const next = new Set(likedBooks);
       next.delete(likeKey);
       setLikedBooks(next);
-      setBooks(prev => prev.map(b => {
-        if (b.id !== bookId) return b;
-        const chLikes = getChapterLikes(b.likes, (b.chapters?.length || 1));
-        chLikes[chapterIndex] = Math.max(0, (chLikes[chapterIndex] || 0) - 1);
-        const updated = { ...b, likes: chLikes };
-        if (selectedBook && selectedBook.id === bookId) setSelectedBook(updated);
-        return updated;
-      }));
+      chLikes[chapterIndex] = Math.max(0, (chLikes[chapterIndex] || 0) - 1);
     } else {
       const next = new Set(likedBooks);
       next.add(likeKey);
       setLikedBooks(next);
-      const targetBook = books.find(b => b.id === bookId);
-      if (targetBook) {
-        const chapterTitle = targetBook.chapters?.[chapterIndex]?.title || `Chapter ${chapterIndex + 1}`;
-        setBooks(prev => prev.map(b => {
-          if (b.id !== bookId) return b;
-          const chLikes = getChapterLikes(b.likes, (b.chapters?.length || 1));
-          chLikes[chapterIndex] = (chLikes[chapterIndex] || 0) + 1;
-          const updated = { ...b, likes: chLikes };
-          if (selectedBook && selectedBook.id === bookId) setSelectedBook(updated);
-          return updated;
-        }));
-        addNotification('Chapter Liked', `${user.displayName} liked ${chapterTitle} from "${targetBook.title}"`, 'favorite', targetBook.author.username);
-      }
+      chLikes[chapterIndex] = (chLikes[chapterIndex] || 0) + 1;
+      const chapterTitle = targetBook.chapters?.[chapterIndex]?.title || `Chapter ${chapterIndex + 1}`;
+      addNotification('Chapter Liked', `${user?.displayName} liked ${chapterTitle} from "${targetBook.title}"`, 'favorite', targetBook.author.username);
     }
+
+    // Update locally for immediate UI feedback
+    setBooks(prev => prev.map(b => {
+      if (b.id !== bookId) return b;
+      const updated = { ...b, likes: [...chLikes] };
+      if (selectedBook && selectedBook.id === bookId) setSelectedBook(updated);
+      return updated;
+    }));
+
+    // Persist to Firestore
+    fbService.updateBook(bookId, { likes: chLikes }).catch(console.error);
   };
 
   const handleAdmire = (targetUser: User) => {
@@ -1599,7 +1646,7 @@ const handleSpinWheel = () => {
 };
 
 
-  const handlePublish = (data: any) => {
+  const handlePublish = async (data: any) => {
     if (containsBadWord(data.title || '') || containsBadWord(data.tagline || '') || containsBadWord(currentPublishingContent || '')) {
       showToast('Your content contains inappropriate language. Please revise before publishing.', 'warning');
       return;
@@ -1607,56 +1654,51 @@ const handleSpinWheel = () => {
     if (currentPublishingId) {
       // Update existing book - preserve existing metadata when just adding/updating chapters
       const existingBook = books.find(b => b.id === currentPublishingId);
-      const oldChapterCount = existingBook?.chapters?.length || 0;
-      setBooks(prev => prev.map(b => {
-        if (b.id === currentPublishingId) {
-          const updatedChapters = [...(b.chapters || [])];
-          // Fix: If index is null, we assume it's the latest draft chapter that was just added/created
-          const targetIndex = currentPublishingChapterIndex !== null ? currentPublishingChapterIndex : updatedChapters.length - 1;
+      if (existingBook) {
+        const updatedChapters = [...(existingBook.chapters || [])];
+        const targetIndex = currentPublishingChapterIndex !== null ? currentPublishingChapterIndex : updatedChapters.length - 1;
 
-          if (targetIndex >= 0 && targetIndex < updatedChapters.length) {
-            updatedChapters[targetIndex] = { ...updatedChapters[targetIndex], content: currentPublishingContent };
-          } else {
-            updatedChapters.push({ title: `Chapter ${updatedChapters.length + 1}`, content: currentPublishingContent });
-          }
-          return {
-            ...b,
-            // Only update metadata if provided (non-empty), otherwise preserve existing
-            tagline: data.tagline || b.tagline,
-            isExplicit: data.isExplicit ?? b.isExplicit,
-            genres: (data.genres && data.genres.length > 0) ? data.genres : b.genres,
-            hashtags: (data.hashtags && data.hashtags.length > 0) ? data.hashtags : b.hashtags,
-            // Fix: Update coverImage if provided, otherwise preserve existing
-            coverImage: data.coverImage || b.coverImage,
-            coverColor: data.coverImage ? '#f5f5f5' : b.coverColor,
-            chapters: updatedChapters,
-            chaptersCount: Math.max(b.chaptersCount, (targetIndex + 1)),
-            likes: (() => { const arr = Array.isArray(b.likes) ? [...b.likes] : [b.likes || 0]; while (arr.length < updatedChapters.length) arr.push(0); return arr; })(),
-            isDraft: false,
-            commentsEnabled: data.commentsEnabled,
-            content: updatedChapters.map(c => c.content).join('\n\n')
-          };
+        if (targetIndex >= 0 && targetIndex < updatedChapters.length) {
+          updatedChapters[targetIndex] = { ...updatedChapters[targetIndex], content: currentPublishingContent };
+        } else {
+          updatedChapters.push({ title: `Chapter ${updatedChapters.length + 1}`, content: currentPublishingContent });
         }
-        return b;
-      }));
 
-      // Notify users who have this book in their library about the new chapter
-      if (existingBook && (currentPublishingChapterIndex === null || (existingBook.chapters && currentPublishingChapterIndex >= existingBook.chapters.length))) {
-        // A new chapter was added — notify all users who have this book saved
-        Object.entries(userBookData).forEach(([username, data]: [string, any]) => {
-          if (username !== user.username && data.ownedBookIds?.includes(currentPublishingId)) {
-            addNotification('New Chapter', `"${existingBook.title}" has a new chapter!`, 'menu_book', username, user.username);
-          }
+        const updatedLikes = (() => { const arr = Array.isArray(existingBook.likes) ? [...existingBook.likes] : [existingBook.likes || 0]; while (arr.length < updatedChapters.length) arr.push(0); return arr; })();
+
+        await fbService.updateBook(currentPublishingId, {
+          tagline: data.tagline || existingBook.tagline,
+          isExplicit: data.isExplicit ?? existingBook.isExplicit,
+          genres: (data.genres && data.genres.length > 0) ? data.genres : existingBook.genres,
+          hashtags: (data.hashtags && data.hashtags.length > 0) ? data.hashtags : existingBook.hashtags,
+          coverImage: data.coverImage || existingBook.coverImage,
+          coverColor: data.coverImage ? '#f5f5f5' : existingBook.coverColor,
+          chapters: updatedChapters,
+          chaptersCount: Math.max(existingBook.chaptersCount, (targetIndex + 1)),
+          likes: updatedLikes,
+          isDraft: false,
+          commentsEnabled: data.commentsEnabled,
+          content: updatedChapters.map((c: any) => c.content).join('\n\n')
         });
+
+        // Notify users who have this book in their library about the new chapter
+        if (currentPublishingChapterIndex === null || (existingBook.chapters && currentPublishingChapterIndex >= existingBook.chapters.length)) {
+          Object.entries(userBookData).forEach(([username, udata]: [string, any]) => {
+            if (username !== user?.username && udata.ownedBookIds?.includes(currentPublishingId)) {
+              addNotification('New Chapter', `"${existingBook.title}" has a new chapter!`, 'menu_book', username, user?.username);
+            }
+          });
+        }
       }
     } else {
-      // New book
-      const book: Book = {
-        id: Math.random().toString(36).substr(2, 9),
+      // New book — write to Firestore
+      const bookData = {
         title: currentPublishingTitle,
-        author: user,
+        authorUid: firebaseUid || '',
+        authorUsername: user?.username || '',
+        authorDisplayName: user?.displayName || '',
         coverColor: data.coverImage ? '#f5f5f5' : '#' + Math.floor(Math.random()*16777215).toString(16),
-        coverImage: data.coverImage || undefined,
+        coverImage: data.coverImage || null,
         likes: [0],
         commentsCount: 0,
         monetizationAttempts: 0,
@@ -1674,15 +1716,15 @@ const handleSpinWheel = () => {
         isFree: true,
         price: 0
       };
-      setBooks(prev => [...prev, book]);
+      await fbService.createBook(bookData);
 
       // Notify admirers and mutuals about the new book
-      const myAdmirers = relationships.filter(r => r.target === user.username).map(r => r.admirer);
-      const myAdmiring = relationships.filter(r => r.admirer === user.username).map(r => r.target);
+      const myAdmirers = relationships.filter(r => r.target === user?.username).map(r => r.admirer);
+      const myAdmiring = relationships.filter(r => r.admirer === user?.username).map(r => r.target);
       const notifyUsers = new Set([...myAdmirers, ...myAdmiring]);
       notifyUsers.forEach(username => {
-        if (username !== user.username) {
-          addNotification('New Book', `${user.displayName} published a new book: "${currentPublishingTitle}"`, 'auto_stories', username, user.username);
+        if (username !== user?.username) {
+          addNotification('New Book', `${user?.displayName} published a new book: "${currentPublishingTitle}"`, 'auto_stories', username, user?.username);
         }
       });
     }
@@ -1694,35 +1736,31 @@ const handleSpinWheel = () => {
     setPublishingInitialData(null);
   };
 
-  const handleUnpublish = (bookId: string) => {
-    setBooks(prev => prev.map(b => {
-      if (b.id === bookId) {
-        // Successful monetization rule: if success once and unpublish, cannot monetize again.
-        const wasMonetized = b.isMonetized;
-        return { ...b, isDraft: true, isMonetized: false, wasMonetizedBefore: wasMonetized || b.wasMonetizedBefore };
-      }
-      return b;
-    }));
+  const handleUnpublish = async (bookId: string) => {
+    const book = books.find(b => b.id === bookId);
+    const wasMonetized = book?.isMonetized;
+    await fbService.updateBook(bookId, {
+      isDraft: true,
+      isMonetized: false,
+      wasMonetizedBefore: wasMonetized || book?.wasMonetizedBefore || false
+    });
     showToast('Book unpublished and moved to drafts.', 'visibility_off');
   };
 
   const handleDeleteBook = (bookId: string) => {
-  showConfirm({
-          title: 'This action cannot be undone.',
-          message: `Are you sure you want to permanently delete this book?`,
-          confirmLabel: 'Yes',
-          cancelLabel: 'No',
-          icon: 'check_circle',
-          onConfirm: () => {
-            setBooks(prev => prev.filter(b => b.id !== bookId));
-      setView('self-profile');
-            showToast(`You successfully deleted your book`);
-          },
-          onCancel: () => {
-}
+    showConfirm({
+      title: 'This action cannot be undone.',
+      message: `Are you sure you want to permanently delete this book?`,
+      confirmLabel: 'Yes',
+      cancelLabel: 'No',
+      icon: 'check_circle',
+      onConfirm: async () => {
+        await fbService.deleteBook(bookId);
+        setView('self-profile');
+        showToast(`You successfully deleted your book`);
+      },
+      onCancel: () => {}
     });
-
-    return;
   };
 
   const handleMarkCompleted = (bookId: string) => {
@@ -1730,7 +1768,6 @@ const handleSpinWheel = () => {
     if (!book) return;
 
     if (book.isCompleted) {
-      // Check if book is monetized — warn about permanent demonetization
       if (book.isMonetized) {
         showConfirm({
           title: 'Warning: Demonetization',
@@ -1738,24 +1775,25 @@ const handleSpinWheel = () => {
           confirmLabel: 'Yes, demonetize and reopen',
           cancelLabel: 'Cancel',
           icon: 'money_off',
-          onConfirm: () => {
-            setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: false, wasCompleted: true, isMonetized: false, wasMonetizedBefore: true, isFree: true, price: 0 } : b));
-            if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: false, wasCompleted: true, isMonetized: false, wasMonetizedBefore: true, isFree: true, price: 0 } : prev);
+          onConfirm: async () => {
+            const updates = { isCompleted: false, wasCompleted: true, isMonetized: false, wasMonetizedBefore: true, isFree: true, price: 0 };
+            await fbService.updateBook(bookId, updates);
+            if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, ...updates } : prev);
             showToast('Book demonetized and reopened', 'money_off');
           },
           onCancel: () => {}
         });
       } else {
-        // Not monetized, just reopen
         showConfirm({
           title: 'Reopen this work?',
           message: 'This will remove the completed status. The book will become editable again.',
           confirmLabel: 'Reopen',
           cancelLabel: 'Cancel',
           icon: 'undo',
-          onConfirm: () => {
-            setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: false, wasCompleted: false } : b));
-            if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: false, wasCompleted: false } : prev);
+          onConfirm: async () => {
+            const updates = { isCompleted: false, wasCompleted: true };
+            await fbService.updateBook(bookId, updates);
+            if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, ...updates } : prev);
             showToast('Completed status removed', 'undo');
           },
           onCancel: () => {}
@@ -1768,9 +1806,10 @@ const handleSpinWheel = () => {
         confirmLabel: 'Yes, Complete',
         cancelLabel: 'Cancel',
         icon: 'check_circle',
-        onConfirm: () => {
-          setBooks(prev => prev.map(b => b.id === bookId ? { ...b, isCompleted: true, wasCompleted: true } : b));
-          if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, isCompleted: true, wasCompleted: true } : prev);
+        onConfirm: async () => {
+          const updates = { isCompleted: true, wasCompleted: true };
+          await fbService.updateBook(bookId, updates);
+          if (selectedBook?.id === bookId) setSelectedBook((prev: any) => prev ? { ...prev, ...updates } : prev);
           showToast('Book marked as completed!', 'check_circle');
         },
         onCancel: () => {}
@@ -1778,77 +1817,70 @@ const handleSpinWheel = () => {
     }
   };
 
-  const handleRequestMonetization = (bookId: string) => {
-    setBooks(prev => prev.map(b => {
-      if (b.id === bookId) {
-        return { ...b, monetizationAttempts: (b.monetizationAttempts || 0) + 1 };
-      }
-      return b;
-    }));
+  const handleRequestMonetization = async (bookId: string) => {
+    const book = books.find(b => b.id === bookId);
+    await fbService.updateBook(bookId, { monetizationAttempts: (book?.monetizationAttempts || 0) + 1 });
   };
 
   const handleSaveDraft = (bookId: string | null, title: string, content: string, chapterIndex: number | null): string | null => {
     if (!title.trim() && !bookId) return null;
-    let newBookId = bookId; 
+    let newBookId = bookId;
     if (bookId) {
-      setBooks(prev => prev.map(b => {
-        if (b.id === bookId) {
-          const updatedChapters = [...(b.chapters || [])];
-          if (chapterIndex !== null && chapterIndex >= 0 && chapterIndex < updatedChapters.length) {
-            updatedChapters[chapterIndex] = { ...updatedChapters[chapterIndex], content };
-          } else if (content.trim()) {
-            updatedChapters.push({ title: `Chapter ${updatedChapters.length + 1}`, content });
-          }
-          return {
-            ...b,
-            title: title.trim() || b.title,
-            chapters: updatedChapters,
-            // DO NOT update chaptersCount here as it reflects published chapters
-            content: updatedChapters.map(c => c.content).join('\n\n')
-          };
+      // Update existing draft in Firestore
+      const existingBook = books.find(b => b.id === bookId);
+      if (existingBook) {
+        const updatedChapters = [...(existingBook.chapters || [])];
+        if (chapterIndex !== null && chapterIndex >= 0 && chapterIndex < updatedChapters.length) {
+          updatedChapters[chapterIndex] = { ...updatedChapters[chapterIndex], content };
+        } else if (content.trim()) {
+          updatedChapters.push({ title: `Chapter ${updatedChapters.length + 1}`, content });
         }
-        return b;
-      }));
+        fbService.updateBook(bookId, {
+          title: title.trim() || existingBook.title,
+          chapters: updatedChapters,
+          content: updatedChapters.map((c: any) => c.content).join('\n\n')
+        }).catch(console.error);
+      }
       return bookId;
     } else {
-      const existingDraft = books.find((b: Book) => b.isDraft && b.title === title.trim() && b.author.username === user.username);
+      const existingDraft = books.find((b: Book) => b.isDraft && b.title === title.trim() && b.author.username === user?.username);
       if (existingDraft) {
         newBookId = existingDraft.id;
-        setBooks(prev => prev.map(b => {
-          if (b.id === existingDraft.id) {
-            const updatedChapters = content.trim() ? [{ title: 'Chapter 1', content }] : [];
-            return { ...b, content, chapters: updatedChapters };
-          }
-          return b;
-        }));
+        const updatedChapters = content.trim() ? [{ title: 'Chapter 1', content }] : [];
+        fbService.updateBook(existingDraft.id, { content, chapters: updatedChapters }).catch(console.error);
       } else {
-      const newBookId = Math.random().toString(36).substr(2, 9);
-      const book: Book = {
-        id: newBookId,
-        title: title.trim(),
-        author: user,
-        coverColor: '#' + Math.floor(Math.random()*16777215).toString(16),
-        likes: [0],
-        commentsCount: 0,
-        publishedDate: new Date().toISOString().split('T')[0],
-        isCompleted: false,
-        isDraft: true,
-        isExplicit: false,
-        chaptersCount: content.trim() ? 1 : 0,
-        tagline: '',
-        genres: [],
-        hashtags: [],
-        content,
-        chapters: content.trim() ? [{ title: 'Chapter 1', content }] : []
-      };
-      setBooks(prev => [...prev, book]);
-      return newBookId;
-    }
+        // Create new draft in Firestore
+        const bookData = {
+          title: title.trim(),
+          authorUid: firebaseUid || '',
+          authorUsername: user?.username || '',
+          authorDisplayName: user?.displayName || '',
+          coverColor: '#' + Math.floor(Math.random()*16777215).toString(16),
+          likes: [0],
+          commentsCount: 0,
+          publishedDate: new Date().toISOString().split('T')[0],
+          isCompleted: false,
+          isDraft: true,
+          isExplicit: false,
+          chaptersCount: content.trim() ? 1 : 0,
+          tagline: '',
+          genres: [],
+          hashtags: [],
+          content,
+          chapters: content.trim() ? [{ title: 'Chapter 1', content }] : []
+        };
+        // Create async and return a temp id — the real-time listener will update with the Firestore id
+        fbService.createBook(bookData).then((created: any) => {
+          newBookId = created.id;
+        }).catch(console.error);
+        // Return null for now since we don't have the id yet synchronously
+        return null;
+      }
     }
     // Sync current editing state
     setLastSelectedBookId(newBookId || 'new');
     setLastSelectedChapterIndex(chapterIndex !== null ? chapterIndex.toString() : 'new');
-    return newBookId
+    return newBookId;
   };
 
 
@@ -1955,7 +1987,7 @@ const handleSpinWheel = () => {
             <img src={`${BASE}logo.png`} alt="MainWrld" className="w-20 h-20 mb-4" />
             <h1 className="text-3xl font-display mb-12">Log In</h1>
             <div className="w-full max-w-sm space-y-4 mb-4">
-              <Input label="Username" placeholder="Enter username..." value={loginForm.username} onChange={(val: string) => setLoginForm({...loginForm, username: val})} />
+              <Input label="Username or Email" placeholder="Enter username or email..." value={loginForm.username} onChange={(val: string) => setLoginForm({...loginForm, username: val})} />
               <Input label="Password" type="password" placeholder="••••••••••••" value={loginForm.password} onChange={(val: string) => setLoginForm({...loginForm, password: val})} />
               <button onClick={() => setView('forgot-password')} className="text-[10px] font-bold text-accent uppercase tracking-widest text-right w-full py-1">Forgot Password?</button>
             </div>
@@ -1970,8 +2002,11 @@ const handleSpinWheel = () => {
           <ForgotPasswordView
             onBack={() => setView('login')}
             registeredUsers={registeredUsers}
-            onResetPassword={(email: string, newPassword: string) => {
-              setRegisteredUsers(prev => prev.map(u => (u as any).email === email ? { ...u, password: newPassword } : u));
+            onResetPassword={async (email: string) => {
+              try {
+                const { sendPasswordResetEmail } = await import('firebase/auth');
+                await sendPasswordResetEmail(auth, email);
+              } catch {}
             }}
             showToast={showToast}
           />
@@ -2156,23 +2191,23 @@ const handleSpinWheel = () => {
                 </div>
               </div>
 
-             {/* Premium Membership */}
+              {/* Premium Membership */}
               <div className="w-full">
                 <div className="p-8 bg-gradient-to-br from-amber-50 to-orange-50 rounded-[2.5rem] border border-amber-200 flex flex-col items-center gap-6 shadow-sm relative overflow-hidden">
                   <div className="absolute top-4 right-4">
                     <span className="material-icons-round text-amber-300 text-4xl">workspace_premium</span>
                   </div>
                   <div className="text-center relative z-10">
-                    <h3 className="text-lg font-bold text-amber-900">MainWrld+</h3>
+                    <h3 className="text-lg font-bold text-amber-900">MainWRLD Premium</h3>
                     <p className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">
-                      {user.isPremium ? 'Active Subscription' : '$30 a year'}
+                      {user.isPremium ? 'Active Subscription' : '$4.99/month'}
                     </p>
                   </div>
                   {user.isPremium ? (
                     <div className="w-full space-y-3">
                       <div className="flex items-center gap-2 text-amber-700">
                         <span className="material-icons-round text-sm">check_circle</span>
-                        <span className="text-xs font-bold">No More Ads</span>
+                        <span className="text-xs font-bold">Ad-free reading experience</span>
                       </div>
                       <div className="flex items-center gap-2 text-amber-700">
                         <span className="material-icons-round text-sm">check_circle</span>
@@ -2180,15 +2215,11 @@ const handleSpinWheel = () => {
                       </div>
                       <div className="flex items-center gap-2 text-amber-700">
                         <span className="material-icons-round text-sm">check_circle</span>
-                        <span className="text-xs font-bold">Compete in MainWrld book contests</span>
+                        <span className="text-xs font-bold">Premium badge on profile</span>
                       </div>
                       <div className="flex items-center gap-2 text-amber-700">
                         <span className="material-icons-round text-sm">check_circle</span>
-                        <span className="text-xs font-bold">Save Chat Messages Forever</span>
-                      </div>
-                       <div className="flex items-center gap-2 text-amber-700">
-                        <span className="material-icons-round text-sm">check_circle</span>
-                        <span className="text-xs font-bold">Annual 200 Point Bonus</span>
+                        <span className="text-xs font-bold">Priority monetization review</span>
                       </div>
                       <div className="pt-3 text-center">
                         <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest">
@@ -2201,24 +2232,20 @@ const handleSpinWheel = () => {
                       <div className="w-full space-y-3">
                         <div className="flex items-center gap-2 text-amber-700">
                           <span className="material-icons-round text-sm">auto_awesome</span>
-                          <span className="text-xs font-bold">No More Ads</span>
+                          <span className="text-xs font-bold">Ad-free reading experience</span>
                         </div>
                         <div className="flex items-center gap-2 text-amber-700">
                           <span className="material-icons-round text-sm">auto_awesome</span>
                           <span className="text-xs font-bold">2x daily points (6 pts/day)</span>
                         </div>
                         <div className="flex items-center gap-2 text-amber-700">
-                        <span className="material-icons-round text-sm">auto_awesome</span>
-                        <span className="text-xs font-bold">Compete in MainWRLD book contests</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-amber-700">
-                        <span className="material-icons-round text-sm">auto_awesome</span>
-                        <span className="text-xs font-bold">Save Chat Messages Forever</span>
-                      </div>
-                       <div className="flex items-center gap-2 text-amber-700">
-                        <span className="material-icons-round text-sm">auto_awesome</span>
-                        <span className="text-xs font-bold">Annual 200 Point Bonus</span>
-                      </div>
+                          <span className="material-icons-round text-sm">auto_awesome</span>
+                          <span className="text-xs font-bold">Premium badge on profile</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-amber-700">
+                          <span className="material-icons-round text-sm">auto_awesome</span>
+                          <span className="text-xs font-bold">Priority monetization review</span>
+                        </div>
                       </div>
                       <Button className="w-full h-16 bg-amber-500 hover:bg-amber-600" onClick={() => {
                         if (STRIPE_PREMIUM_PAYMENT_LINK && !STRIPE_PREMIUM_PAYMENT_LINK.includes('test_premium')) {
@@ -2227,18 +2254,18 @@ const handleSpinWheel = () => {
                         } else {
                           showConfirm({
                             title: 'Upgrade to Premium',
-                            message: 'Subscribe to MainWrld+ for $30/year?',
+                            message: 'Subscribe to MainWRLD Premium for $4.99/month?',
                             confirmLabel: 'Subscribe',
                             cancelLabel: 'Maybe Later',
                             icon: 'workspace_premium',
                             onConfirm: () => {
                               setUser(prev => ({ ...prev, isPremium: true, premiumSince: new Date().toISOString() }));
-                              showToast('Welcome to MainWrld+!', 'workspace_premium');
+                              showToast('Welcome to MainWRLD Premium!', 'workspace_premium');
                             },
                           });
                         }
                       }}>
-                        Subscribe — $30/yr
+                        Subscribe — $4.99/mo
                       </Button>
                       <p className="text-[8px] text-amber-400 text-center font-bold uppercase tracking-widest flex items-center justify-center gap-1">
                         <span className="material-icons-round text-[10px]">lock</span> Secured by Stripe • Cancel anytime
@@ -2590,9 +2617,23 @@ const handleSpinWheel = () => {
           onNavigate={(v: View) => setView(v)}
           isAdmin={isAdmin}
           user={user}
-          onUpdateUser={setUser}
-          onUpdatePassword={(newPassword: string) => {
-            setRegisteredUsers(prev => prev.map(u => u.username === user.username ? { ...u, password: newPassword } : u));
+          onUpdateUser={(updatedUser: User) => {
+            setUser(updatedUser);
+            if (firebaseUid) {
+              fbService.updateUserProfile(firebaseUid, {
+                displayName: updatedUser.displayName,
+                points: updatedUser.points,
+                strikes: updatedUser.strikes,
+              }).catch(console.error);
+            }
+          }}
+          onUpdatePassword={async (newPassword: string) => {
+            try {
+              await fbService.changePassword(newPassword);
+              showToast('Password updated!', 'check_circle');
+            } catch (err: any) {
+              showToast('Failed to update password. You may need to log in again.', 'error');
+            }
           }}
           showToast={showToast}
         />;
@@ -4213,37 +4254,22 @@ const PublishingView = ({ initialData, onPost, onBack, isNewBook}: any) => {
 };
 
 const ForgotPasswordView = ({ onBack, registeredUsers, onResetPassword, showToast }: any) => {
-  const [step, setStep] = useState<'email' | 'reset'>('email');
   const [email, setEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [sent, setSent] = useState(false);
 
-  const handleCheckEmail = () => {
+  const handleSendReset = async () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       showToast('Please enter a valid email', 'error');
       return;
     }
-    const userExists = registeredUsers.some((u: any) => u.email === email);
-    if (!userExists) {
-      showToast('No account found with this email', 'error');
-      return;
+    try {
+      await onResetPassword(email);
+      setSent(true);
+      showToast('Password reset email sent!', 'check_circle');
+    } catch {
+      showToast('Failed to send reset email', 'error');
     }
-    setStep('reset');
-  };
-
-  const handleResetPassword = () => {
-    if (newPassword.length < 12) {
-      showToast('Password must be at least 12 characters', 'error');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      showToast('Passwords do not match', 'error');
-      return;
-    }
-    onResetPassword(email, newPassword);
-    showToast('Password reset successfully!', 'check_circle');
-    onBack();
   };
 
   return (
@@ -4254,24 +4280,21 @@ const ForgotPasswordView = ({ onBack, registeredUsers, onResetPassword, showToas
         </button>
       </header>
 
-      {step === 'email' ? (
+      {!sent ? (
         <>
           <h1 className="text-3xl font-display mb-4">Reset Password</h1>
-          <p className="text-center text-xs text-gray-400 font-bold uppercase tracking-widest mb-12 px-8">Enter your email address to reset your password.</p>
+          <p className="text-center text-xs text-gray-400 font-bold uppercase tracking-widest mb-12 px-8">Enter your email and we'll send you a reset link.</p>
           <div className="w-full max-w-sm space-y-8 mb-8">
             <Input label="Email Address" placeholder="you@example.com" value={email} onChange={(val: string) => setEmail(val)} />
-            <Button className="w-full" onClick={handleCheckEmail}>Continue</Button>
+            <Button className="w-full" onClick={handleSendReset}>Send Reset Link</Button>
           </div>
         </>
       ) : (
         <>
-          <h1 className="text-3xl font-display mb-4">New Password</h1>
-          <p className="text-center text-xs text-gray-400 font-bold uppercase tracking-widest mb-12 px-8">Enter your new password below.</p>
-          <div className="w-full max-w-sm space-y-4 mb-8">
-            <Input label="New Password" type="password" placeholder="••••••••••••" value={newPassword} onChange={(val: string) => setNewPassword(val)} />
-            <Input label="Confirm Password" type="password" placeholder="••••••••••••" value={confirmPassword} onChange={(val: string) => setConfirmPassword(val)} />
-            <Button className="w-full mt-4" onClick={handleResetPassword}>Reset Password</Button>
-          </div>
+          <span className="material-icons-round text-5xl text-green-500 mb-4">check_circle</span>
+          <h1 className="text-3xl font-display mb-4">Check Your Email</h1>
+          <p className="text-center text-xs text-gray-400 font-bold uppercase tracking-widest mb-12 px-8">We sent a password reset link to {email}</p>
+          <Button className="w-full max-w-sm" onClick={onBack}>Back to Login</Button>
         </>
       )}
     </div>
