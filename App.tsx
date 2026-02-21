@@ -398,7 +398,7 @@ const CURRENT_USER_MOCK: User = {
 
 const MUTUALS: User[] = [
   { username: 'jemma_b', displayName: 'Jemma Blair', isOnline: true, activity: 'Reading', position: [5, 0, -15], isMutual: true, points: 240, admirersCount: 1200, mutualsCount: 88, strikes: 0 },
-  { username: 'mark_da_don', displayName: 'Marcus D.', isOnline: true, activity: 'Reading', position: [-12, 0, 8], isMutual: true, points: 15, admirersCount: 450, mutualsCount: 12, strikes: 0 },
+  { username: 'mark_da_don', displayName: 'Marcus D.', isOnline: true, activity: 'Writing', position: [-12, 0, 8], isMutual: true, points: 15, admirersCount: 450, mutualsCount: 12, strikes: 0 },
 ];
 
 
@@ -2352,7 +2352,7 @@ const handleSpinWheel = () => {
 
       case 'library':
         const ownedIds = getUserOwnedBookIds();
-        const ownedBooks = books.filter(b => (ownedIds.has(b.id) || b.author.username === user.username) && !blockedUsers.has(b.author.username));
+        const ownedBooks = books.filter(b => ownedIds.has(b.id) && !blockedUsers.has(b.author.username));
         
         return (
           <div className="fixed inset-0 bg-white overflow-y-auto no-scrollbar pb-32 animate-in fade-in duration-500">
