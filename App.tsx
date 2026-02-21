@@ -665,6 +665,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User>(BLANK_USER);
   const [authLoading, setAuthLoading] = useState(true);
   const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
+  const [userDataLoaded, setUserDataLoaded] = useState(false); // Guard for persist effects
   const [books, setBooks] = useState<Book[]>([]);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [readingChapterIndex, setReadingChapterIndex] = useState(0);
@@ -834,7 +835,7 @@ const App: React.FC = () => {
 
   // Persist user book data to Firestore
   useEffect(() => {
-    if (!firebaseUid || !user.username) return;
+    if (!firebaseUid || !user.username || !userDataLoaded) return;
     const ud = userBookData[user.username];
     if (!ud) return;
     fbService.updateUserProfile(firebaseUid, {
@@ -842,7 +843,7 @@ const App: React.FC = () => {
       purchasedBookIds: (ud as any).purchasedBookIds || [],
       bookProgress: ud.bookProgress || {},
     }).catch(console.error);
-  }, [userBookData, firebaseUid, user.username]);
+  }, [userBookData, firebaseUid, user.username, userDataLoaded]);
 
   // Publishing temp state
   const [currentPublishingContent, setCurrentPublishingContent] = useState('');
@@ -973,6 +974,8 @@ const App: React.FC = () => {
       if (profile.cart) setCart(profile.cart);
       // Load item price overrides
       if (profile.itemPriceOverrides) setItemPriceOverrides(profile.itemPriceOverrides);
+      // Mark user data as loaded so persist effects can start saving
+      setUserDataLoaded(true);
     }).catch(console.error);
   }, [firebaseUid, user.username]);
 
@@ -1014,44 +1017,44 @@ const App: React.FC = () => {
 
   // Persist avatar config to Firestore
   useEffect(() => {
-    if (!firebaseUid || !user.username) return;
+    if (!firebaseUid || !user.username || !userDataLoaded) return;
     const cfg = allAvatarConfigs[user.username];
     if (cfg) fbService.updateUserProfile(firebaseUid, { avatarConfig: cfg }).catch(console.error);
-  }, [allAvatarConfigs, firebaseUid, user.username]);
+  }, [allAvatarConfigs, firebaseUid, user.username, userDataLoaded]);
 
   // Persist unlocked items to Firestore
   useEffect(() => {
-    if (!firebaseUid || !user.username) return;
+    if (!firebaseUid || !user.username || !userDataLoaded) return;
     const items = allUnlockedItems[user.username];
     if (items) fbService.updateUserProfile(firebaseUid, { unlockedItems: items }).catch(console.error);
-  }, [allUnlockedItems, firebaseUid, user.username]);
+  }, [allUnlockedItems, firebaseUid, user.username, userDataLoaded]);
 
   // Persist blocked users to Firestore
   useEffect(() => {
-    if (!firebaseUid || !user.username) return;
+    if (!firebaseUid || !user.username || !userDataLoaded) return;
     fbService.updateUserProfile(firebaseUid, { blockedUsers: [...blockedUsers] }).catch(console.error);
-  }, [blockedUsers, firebaseUid, user.username]);
+  }, [blockedUsers, firebaseUid, user.username, userDataLoaded]);
 
   // Persist reading activity to Firestore
   useEffect(() => {
-    if (!firebaseUid || !user.username) return;
+    if (!firebaseUid || !user.username || !userDataLoaded) return;
     const activity = readingActivity[user.username];
     if (activity) fbService.updateUserProfile(firebaseUid, { readingActivity: activity }).catch(console.error);
-  }, [readingActivity, firebaseUid, user.username]);
+  }, [readingActivity, firebaseUid, user.username, userDataLoaded]);
 
   // Persist coupons to Firestore
   useEffect(() => {
-    if (!firebaseUid || !user.username) return;
+    if (!firebaseUid || !user.username || !userDataLoaded) return;
     fbService.updateUserProfile(firebaseUid, { coupons }).catch(console.error);
-  }, [coupons, firebaseUid, user.username]);
+  }, [coupons, firebaseUid, user.username, userDataLoaded]);
 
   // Persist cart to Firestore
   useEffect(() => {
-    if (!firebaseUid || !user.username) return;
+    if (!firebaseUid || !user.username || !userDataLoaded) return;
     // Store simplified cart (essential fields only) to keep document small
     const cartData = cart.map(b => ({ id: b.id, title: b.title, price: b.price, coverColor: b.coverColor, coverImage: b.coverImage }));
     fbService.updateUserProfile(firebaseUid, { cart: cartData }).catch(console.error);
-  }, [cart, firebaseUid, user.username]);
+  }, [cart, firebaseUid, user.username, userDataLoaded]);
 
   // Handle Stripe payment redirects and pending purchases - only after user is loaded
   useEffect(() => {
@@ -1192,6 +1195,7 @@ const App: React.FC = () => {
     } catch {}
     setUser(BLANK_USER);
     setFirebaseUid(null);
+    setUserDataLoaded(false);
     setView('login');
   };
 
