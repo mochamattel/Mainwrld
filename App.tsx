@@ -833,17 +833,67 @@ const App: React.FC = () => {
     });
   }, [user.username]);
 
-  // Persist user book data to Firestore
+  // Debounce ref for batched Firestore writes
+  const persistTimerRef = useRef<any>(null);
+
+  // Single debounced persist effect — batches ALL user data into one Firestore write
+  // This replaces 8 separate persist effects, reducing writes by ~8x
   useEffect(() => {
     if (!firebaseUid || !user.username || !userDataLoaded) return;
-    const ud = userBookData[user.username];
-    if (!ud) return;
-    fbService.updateUserProfile(firebaseUid, {
-      ownedBookIds: ud.ownedBookIds || [],
-      purchasedBookIds: (ud as any).purchasedBookIds || [],
-      bookProgress: ud.bookProgress || {},
-    }).catch(console.error);
-  }, [userBookData, firebaseUid, user.username, userDataLoaded]);
+    if (view === 'splash' || view === 'login' || view === 'signup') return;
+
+    // Clear previous timer
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+
+    // Debounce: wait 2 seconds of no changes before writing
+    persistTimerRef.current = setTimeout(() => {
+      const ud = userBookData[user.username];
+      const cfg = allAvatarConfigs[user.username];
+      const items = allUnlockedItems[user.username];
+      const activity = readingActivity[user.username];
+      const cartData = cart.map(b => ({ id: b.id, title: b.title, price: b.price, coverColor: b.coverColor, coverImage: b.coverImage }));
+
+      const batchUpdate: Record<string, any> = {
+        // User state
+        points: user.points,
+        displayName: user.displayName,
+        strikes: user.strikes,
+        admirersCount: user.admirersCount,
+        mutualsCount: user.mutualsCount,
+        isPremium: user.isPremium || false,
+        // Book data
+        ...(ud ? {
+          ownedBookIds: ud.ownedBookIds || [],
+          purchasedBookIds: (ud as any).purchasedBookIds || [],
+          bookProgress: ud.bookProgress || {},
+        } : {}),
+        // Avatar
+        ...(cfg ? { avatarConfig: cfg } : {}),
+        // Unlocked items
+        ...(items ? { unlockedItems: items } : {}),
+        // Blocked users
+        blockedUsers: [...blockedUsers],
+        // Reading activity
+        ...(activity ? { readingActivity: activity } : {}),
+        // Coupons
+        coupons,
+        // Cart
+        cart: cartData,
+      };
+
+      fbService.updateUserProfile(firebaseUid, batchUpdate).catch(console.error);
+    }, 2000);
+
+    return () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    };
+  }, [
+    user.points, user.username, user.displayName, user.isPremium, user.strikes,
+    user.admirersCount, user.mutualsCount,
+    userBookData, allAvatarConfigs, allUnlockedItems, blockedUsers,
+    readingActivity, coupons, cart,
+    firebaseUid, userDataLoaded, view,
+  ]);
 
   // Publishing temp state
   const [currentPublishingContent, setCurrentPublishingContent] = useState('');
@@ -1001,60 +1051,9 @@ const App: React.FC = () => {
     }
   }, [view, selectedChatUser]);
 
-  // Persist user state to Firestore whenever it changes
-  useEffect(() => {
-    if (view !== 'splash' && view !== 'login' && view !== 'signup' && firebaseUid && user.username) {
-      fbService.updateUserProfile(firebaseUid, {
-        points: user.points,
-        displayName: user.displayName,
-        strikes: user.strikes,
-        admirersCount: user.admirersCount,
-        mutualsCount: user.mutualsCount,
-        isPremium: user.isPremium || false,
-      }).catch(console.error);
-    }
-  }, [user.points, user.username, user.displayName, user.isPremium, view, firebaseUid]);
-
-  // Persist avatar config to Firestore
-  useEffect(() => {
-    if (!firebaseUid || !user.username || !userDataLoaded) return;
-    const cfg = allAvatarConfigs[user.username];
-    if (cfg) fbService.updateUserProfile(firebaseUid, { avatarConfig: cfg }).catch(console.error);
-  }, [allAvatarConfigs, firebaseUid, user.username, userDataLoaded]);
-
-  // Persist unlocked items to Firestore
-  useEffect(() => {
-    if (!firebaseUid || !user.username || !userDataLoaded) return;
-    const items = allUnlockedItems[user.username];
-    if (items) fbService.updateUserProfile(firebaseUid, { unlockedItems: items }).catch(console.error);
-  }, [allUnlockedItems, firebaseUid, user.username, userDataLoaded]);
-
-  // Persist blocked users to Firestore
-  useEffect(() => {
-    if (!firebaseUid || !user.username || !userDataLoaded) return;
-    fbService.updateUserProfile(firebaseUid, { blockedUsers: [...blockedUsers] }).catch(console.error);
-  }, [blockedUsers, firebaseUid, user.username, userDataLoaded]);
-
-  // Persist reading activity to Firestore
-  useEffect(() => {
-    if (!firebaseUid || !user.username || !userDataLoaded) return;
-    const activity = readingActivity[user.username];
-    if (activity) fbService.updateUserProfile(firebaseUid, { readingActivity: activity }).catch(console.error);
-  }, [readingActivity, firebaseUid, user.username, userDataLoaded]);
-
-  // Persist coupons to Firestore
-  useEffect(() => {
-    if (!firebaseUid || !user.username || !userDataLoaded) return;
-    fbService.updateUserProfile(firebaseUid, { coupons }).catch(console.error);
-  }, [coupons, firebaseUid, user.username, userDataLoaded]);
-
-  // Persist cart to Firestore
-  useEffect(() => {
-    if (!firebaseUid || !user.username || !userDataLoaded) return;
-    // Store simplified cart (essential fields only) to keep document small
-    const cartData = cart.map(b => ({ id: b.id, title: b.title, price: b.price, coverColor: b.coverColor, coverImage: b.coverImage }));
-    fbService.updateUserProfile(firebaseUid, { cart: cartData }).catch(console.error);
-  }, [cart, firebaseUid, user.username, userDataLoaded]);
+  // NOTE: Individual persist effects removed — all user data is now batched
+  // into a single debounced write (see persistTimerRef effect above)
+  // This reduces Firestore writes by ~8x and prevents quota exhaustion
 
   // Handle Stripe payment redirects and pending purchases - only after user is loaded
   useEffect(() => {
