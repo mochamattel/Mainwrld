@@ -1622,6 +1622,7 @@ const handleSpinWheel = () => {
 
 
   const handlePublish = async (data: any) => {
+    try {
     if (containsBadWord(data.title || '') || containsBadWord(data.tagline || '') || containsBadWord(currentPublishingContent || '')) {
       showToast('Your content contains inappropriate language. Please revise before publishing.', 'warning');
       return;
@@ -1709,6 +1710,11 @@ const handleSpinWheel = () => {
     setCurrentPublishingId(null);
     setCurrentPublishingChapterIndex(null);
     setPublishingInitialData(null);
+    showToast('Published successfully!', 'check_circle');
+    } catch (err: any) {
+      console.error('Publish error:', err);
+      showToast('Failed to publish. Please try again.', 'error');
+    }
   };
 
   const handleUnpublish = async (bookId: string) => {
@@ -2407,16 +2413,47 @@ const handleSpinWheel = () => {
             setLastSelectedBookId(id);
             setLastSelectedChapterIndex(ch);
           }}
-          onPublish={(id: string|null, title: string, content: string, chapterIndex: number | null) => {
-           
-            const savedId = handleSaveDraft(id, title, content, chapterIndex);
-            const effectiveId = id || savedId;
-            
+          onPublish={async (id: string|null, title: string, content: string, chapterIndex: number | null) => {
+
+            let effectiveId = id;
+            if (!effectiveId) {
+              // For new books, create in Firestore and wait for the ID
+              const bookData = {
+                title: title.trim(),
+                authorUid: firebaseUid || '',
+                authorUsername: user?.username || '',
+                authorDisplayName: user?.displayName || '',
+                coverColor: '#' + Math.floor(Math.random()*16777215).toString(16),
+                likes: [0],
+                commentsCount: 0,
+                publishedDate: new Date().toISOString().split('T')[0],
+                isCompleted: false,
+                isDraft: true,
+                isExplicit: false,
+                chaptersCount: content.trim() ? 1 : 0,
+                tagline: '',
+                genres: [],
+                hashtags: [],
+                content,
+                chapters: content.trim() ? [{ title: 'Chapter 1', content }] : []
+              };
+              try {
+                const created = await fbService.createBook(bookData);
+                effectiveId = (created as any).id;
+              } catch (err) {
+                console.error('Failed to create book:', err);
+                return;
+              }
+            } else {
+              // Existing book — save draft
+              handleSaveDraft(id, title, content, chapterIndex);
+            }
+
             if (effectiveId) {
               const existingBook = books.find(b => b.id === effectiveId);
-              setCurrentPublishingId(effectiveId); 
-              setCurrentPublishingTitle(title); 
-              setCurrentPublishingContent(content); 
+              setCurrentPublishingId(effectiveId);
+              setCurrentPublishingTitle(title);
+              setCurrentPublishingContent(content);
               setCurrentPublishingChapterIndex(chapterIndex);
               setPublishingInitialData(existingBook ? {
                 tagline: existingBook.tagline,
