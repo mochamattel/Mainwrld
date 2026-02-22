@@ -59,8 +59,8 @@ export const signUp = async (
     createdAt: serverTimestamp()
   });
 
-  // 3. Create username lookup document for uniqueness checking
-  await setDoc(doc(db, 'usernames', username.toLowerCase()), { uid });
+  // 3. Create username lookup document for uniqueness checking + login
+  await setDoc(doc(db, 'usernames', username.toLowerCase()), { uid, email });
 
   return { uid, username, displayName, email, birthDate };
 };
@@ -69,17 +69,29 @@ export const logIn = async (emailOrUsername: string, password: string) => {
   let email = emailOrUsername;
 
   // If not an email, look up username to get email
+  // NOTE: usernames collection must be readable without auth (public lookup)
   if (!emailOrUsername.includes('@')) {
     const usernameDoc = await getDoc(doc(db, 'usernames', emailOrUsername.toLowerCase()));
     if (!usernameDoc.exists()) {
       throw new Error('Invalid username or password.');
     }
-    const uid = usernameDoc.data().uid;
-    const userDoc = await getDoc(doc(db, 'users', uid));
-    if (!userDoc.exists()) {
-      throw new Error('User profile not found.');
+    const data = usernameDoc.data();
+    // Prefer email stored directly in usernames doc (avoids needing auth to read users profile)
+    if (data.email) {
+      email = data.email;
+    } else {
+      // Fallback for old accounts: try reading user profile
+      try {
+        const userDoc = await getDoc(doc(db, 'users', data.uid));
+        if (!userDoc.exists()) {
+          throw new Error('Please log in with your email address instead of username.');
+        }
+        email = userDoc.data().email;
+      } catch (e: any) {
+        // If permission denied (not authed yet), ask user to use email
+        throw new Error('Please log in with your email address instead of username.');
+      }
     }
-    email = userDoc.data().email;
   }
 
   const credential = await signInWithEmailAndPassword(auth, email, password);

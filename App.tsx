@@ -1219,7 +1219,7 @@ const App: React.FC = () => {
       setAuthError(null);
       setView('home');
     } catch (err: any) {
-      setAuthError('Invalid username or password.');
+      setAuthError(err.message || 'Invalid username or password.');
     }
   };
 
