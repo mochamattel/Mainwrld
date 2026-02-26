@@ -5394,6 +5394,10 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
     return cleanText === '' ? 0 : cleanText.split(/\s+/).length;
   }, []);
 
+  // Use ref for wordCount inside callback to avoid re-creating updateWordCount on every keystroke
+  const wordCountRef = useRef(wordCount);
+  wordCountRef.current = wordCount;
+
   const updateWordCount = useCallback(() => {
     if (editorRef.current) {
       const text = editorRef.current.innerText || "";
@@ -5405,12 +5409,12 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
         setWordCount(MAX_WORD_COUNT);
         return;
       }
-      if (count >= MAX_WORD_COUNT - 100 && wordCount < MAX_WORD_COUNT - 100) {
+      if (count >= MAX_WORD_COUNT - 100 && wordCountRef.current < MAX_WORD_COUNT - 100) {
         onNotify?.('Approaching limit', 'You are in your last 100 words!');
       }
       setWordCount(count);
     }
-  }, [calculateWordCount, wordCount, onNotify]);
+  }, [calculateWordCount, onNotify]);
 
   useEffect(() => {
     document.execCommand('defaultParagraphSeparator', false, 'p');
