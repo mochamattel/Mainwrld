@@ -207,12 +207,13 @@ export const getBook = async (bookId: string) => {
   const q = query(collection(db, 'books'), where('id', '==', bookId));
   const snapshot = await getDocs(q);
   if (snapshot.empty) return null;
-  return snapshot.docs[0].data();
+  const d = snapshot.docs[0];
+  return { id: d.id, ...d.data() };
 };
 
 export const getAllBooks = async () => {
   const snapshot = await getDocs(collection(db, 'books'));
-  return snapshot.docs.map(d => d.data());
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 };
 
 // Real-time listener for all books
@@ -220,7 +221,7 @@ export const subscribeToBooksChanges = (
   callback: (books: any[]) => void
 ): Unsubscribe => {
   return onSnapshot(collection(db, 'books'), (snapshot: QuerySnapshot) => {
-    const books = snapshot.docs.map(d => d.data());
+    const books = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
     callback(books);
   });
 };
