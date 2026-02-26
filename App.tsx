@@ -1682,17 +1682,22 @@ const App: React.FC = () => {
       if (updatedBook && selectedBook && selectedBook.id === bookId) setSelectedBook(updatedBook);
       return updated;
     });
-    setUserOwnsBook(bookId);
+    // Compute updated data BEFORE setState so we can write to Firestore immediately
+    const currentUd = userBookDataRef.current[user.username] || { ownedBookIds: [], bookProgress: {}, purchasedBookIds: [] };
+    const newOwned = currentUd.ownedBookIds.includes(bookId) ? currentUd.ownedBookIds : [...currentUd.ownedBookIds, bookId];
+    const currentPurchased = currentUd.purchasedBookIds || [];
+    const newPurchased = currentPurchased.includes(bookId) ? currentPurchased : [...currentPurchased, bookId];
+    // Update local state with the pre-computed values
+    setUserBookData(prev => ({
+      ...prev,
+      [user.username]: { ...currentUd, ownedBookIds: newOwned, purchasedBookIds: newPurchased }
+    }));
     showToast('Book saved to your library!', 'bookmark');
-    // Immediately persist library change to Firestore (don't rely on debounce)
-    // Use ref to always read latest userBookData (avoids stale closure)
+    // Persist to Firestore using the same pre-computed values (no race condition)
     if (firebaseUid) {
-      const ud = userBookDataRef.current[user.username] || { ownedBookIds: [], bookProgress: {}, purchasedBookIds: [] };
-      const updatedOwned = ud.ownedBookIds.includes(bookId) ? ud.ownedBookIds : [...ud.ownedBookIds, bookId];
-      const updatedPurchased = (ud as any).purchasedBookIds || [];
       fbService.updateUserProfile(firebaseUid, {
-        ownedBookIds: updatedOwned,
-        purchasedBookIds: updatedPurchased.includes(bookId) ? updatedPurchased : [...updatedPurchased, bookId],
+        ownedBookIds: newOwned,
+        purchasedBookIds: newPurchased,
       }).catch(console.error);
     }
   };
@@ -1705,19 +1710,21 @@ const App: React.FC = () => {
       if (updatedBook && selectedBook && selectedBook.id === bookId) setSelectedBook(updatedBook);
       return updated;
     });
-    setUserBookData(prev => {
-      const ud = { ...(prev[user.username] || { ownedBookIds: [], bookProgress: {}, purchasedBookIds: [] }) };
-      ud.ownedBookIds = ud.ownedBookIds.filter((id: string) => id !== bookId);
-      if (ud.purchasedBookIds) ud.purchasedBookIds = ud.purchasedBookIds.filter((id: string) => id !== bookId);
-      return { ...prev, [user.username]: ud };
-    });
+    // Compute updated data BEFORE setState so we can write to Firestore immediately
+    const currentUd = userBookDataRef.current[user.username] || { ownedBookIds: [], bookProgress: {}, purchasedBookIds: [] };
+    const newOwned = currentUd.ownedBookIds.filter((id: string) => id !== bookId);
+    const newPurchased = (currentUd.purchasedBookIds || []).filter((id: string) => id !== bookId);
+    // Update local state with the pre-computed values
+    setUserBookData(prev => ({
+      ...prev,
+      [user.username]: { ...currentUd, ownedBookIds: newOwned, purchasedBookIds: newPurchased }
+    }));
     showToast('Book removed from your library.', 'bookmark_remove');
-    // Immediately persist removal to Firestore (use ref for latest data)
+    // Persist to Firestore using the same pre-computed values (no race condition)
     if (firebaseUid) {
-      const ud = userBookDataRef.current[user.username] || { ownedBookIds: [], bookProgress: {}, purchasedBookIds: [] };
       fbService.updateUserProfile(firebaseUid, {
-        ownedBookIds: ud.ownedBookIds.filter((id: string) => id !== bookId),
-        purchasedBookIds: ((ud as any).purchasedBookIds || []).filter((id: string) => id !== bookId),
+        ownedBookIds: newOwned,
+        purchasedBookIds: newPurchased,
       }).catch(console.error);
     }
   };
@@ -2623,22 +2630,31 @@ const handleSpinWheel = () => {
       setCoupons={setCoupons} 
       onBack={() => setView('self-profile')} 
       onOwnedUpdate={(bookId: string) => {
-
-        
-        setUserOwnsBook(bookId);
-
-  
+        // Compute updated data BEFORE setState for immediate Firestore write
+        const currentUd = userBookDataRef.current[user.username] || { ownedBookIds: [], bookProgress: {}, purchasedBookIds: [] };
+        const newOwned = currentUd.ownedBookIds.includes(bookId) ? currentUd.ownedBookIds : [...currentUd.ownedBookIds, bookId];
+        const currentPurchased = currentUd.purchasedBookIds || [];
+        const newPurchased = currentPurchased.includes(bookId) ? currentPurchased : [...currentPurchased, bookId];
+        setUserBookData(prev => ({
+          ...prev,
+          [user.username]: { ...currentUd, ownedBookIds: newOwned, purchasedBookIds: newPurchased }
+        }));
         setBooks(prev => {
           const updated = prev.map(b =>
             b.id === bookId ? { ...b, isOwned: true } : b
           );
-
           if (selectedBook && selectedBook.id === bookId) {
             setSelectedBook({ ...selectedBook, isOwned: true });
           }
-
           return updated;
         });
+        // Persist to Firestore immediately
+        if (firebaseUid) {
+          fbService.updateUserProfile(firebaseUid, {
+            ownedBookIds: newOwned,
+            purchasedBookIds: newPurchased,
+          }).catch(console.error);
+        }
       }}
       showToast={showToast}
       showConfirm={showConfirm}
