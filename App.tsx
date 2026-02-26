@@ -310,8 +310,25 @@ if (!localStorage.getItem('mainwrld_hair_pos_v4')) {
 const HAIR_POSITIONS: Record<string, { width: string; left: string; top: string }> = loadPositions('mainwrld_hair_positions', DEFAULT_HAIR_POSITIONS);
 const FACE_POSITIONS: Record<string, { width: string; left: string; top: string }> = loadPositions('mainwrld_face_positions', DEFAULT_FACE_POSITIONS);
 
-const getHairPosition = (hairId: string) => HAIR_POSITIONS[hairId] || { width: '33%', left: '33.5%', top: '-2%' };
-const getFacePosition = (faceId: string) => FACE_POSITIONS[faceId] || { width: '28%', left: '36%', top: '4.5%' };
+const getHairPosition = (hairId: string, shrink = 1, shift = 0) => {
+  const pos = HAIR_POSITIONS[hairId] || { width: '30%', left: '34%', top: '2%' };
+  if (shrink === 1 && shift === 0) return pos;
+  const origW = parseFloat(pos.width);
+  const origL = parseFloat(pos.left);
+  const newW = +(origW * shrink).toFixed(3);
+  // center after shrink, then apply explicit horizontal shift (percentage points)
+  const newL = +(origL + (origW - newW) / 2 + shift).toFixed(3);
+  return { width: `${newW}%`, left: `${newL}%`, top: pos.top };
+};
+const getFacePosition = (faceId: string, shrink = 1) => {
+  const pos = FACE_POSITIONS[faceId] || { width: '28%', left: '36%', top: '4.5%' };
+  if (shrink === 1) return pos;
+  const origW = parseFloat(pos.width);
+  const origL = parseFloat(pos.left);
+  const newW = +(origW * shrink).toFixed(3);
+  const newL = +(origL + (origW - newW) / 2).toFixed(3);
+  return { width: `${newW}%`, left: `${newL}%`, top: pos.top };
+};
 
 const AVATAR_ITEMS: AvatarItem[] = [
   // Bodies - all free
@@ -2777,9 +2794,9 @@ const handleSpinWheel = () => {
                 <div className="w-36 h-36 rounded-[3rem] overflow-hidden border-4 border-white shadow-2xl mb-6 relative bg-gray-50">
                   <div className="absolute left-1/2" style={{ width: '140px', height: '194px', transform: 'translateX(-50%) scale(2.2)', transformOrigin: 'top center', top: '8%' }}>
                     <img src={getAvatarItemPath('body', avatarConfig.bodyId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:1}} />
-                    {avatarConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', avatarConfig.faceId)} className="absolute" style={{zIndex:2, ...getFacePosition(avatarConfig.faceId)}} />}
+                    {avatarConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', avatarConfig.faceId)} className="absolute" style={{zIndex:2, ...getFacePosition(avatarConfig.faceId, 0.94)}} />}
                     <img src={getAvatarItemPath('outfit', avatarConfig.outfitId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:3}} />
-                    {avatarConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', avatarConfig.hairId)} className="absolute" style={{zIndex:4, ...getHairPosition(avatarConfig.hairId)}} />}
+                    {avatarConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', avatarConfig.hairId)} className="absolute" style={{zIndex:4, ...getHairPosition(avatarConfig.hairId, 0.918, 0.35)}} />}
                   </div>
                 </div>
               ) : (
@@ -3572,9 +3589,9 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
           <div className="w-32 h-32 rounded-[3rem] overflow-hidden border-4 border-white shadow-2xl mb-6 relative bg-gray-50">
             <div className="absolute left-1/2" style={{ width: '140px', height: '194px', transform: 'translateX(-50%) scale(2)', transformOrigin: 'top center', top: '8%' }}>
               <img src={getAvatarItemPath('body', avatarConfig.bodyId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:1}} />
-              {avatarConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', avatarConfig.faceId)} className="absolute" style={{zIndex:2, ...getFacePosition(avatarConfig.faceId)}} />}
+              {avatarConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', avatarConfig.faceId)} className="absolute" style={{zIndex:2, ...getFacePosition(avatarConfig.faceId, 0.94)}} />}
               <img src={getAvatarItemPath('outfit', avatarConfig.outfitId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:3}} />
-              {avatarConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', avatarConfig.hairId)} className="absolute" style={{zIndex:4, ...getHairPosition(avatarConfig.hairId)}} />}
+              {avatarConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', avatarConfig.hairId)} className="absolute" style={{zIndex:4, ...getHairPosition(avatarConfig.hairId, 0.918, 0.35)}} />}
             </div>
           </div>
         ) : (
