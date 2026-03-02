@@ -130,6 +130,8 @@ interface NotificationItem {
   recipient: string;
   sender?: string;
   read?: boolean;
+  targetId?: string; // e.g., username for profile, bookId for book
+  targetChapterIndex?: number; // For comments on specific chapters
 }
 
 interface ChatMessage {
@@ -429,7 +431,8 @@ const CURRENT_USER_MOCK: User = {
   strikes: 0,
 };
 
-const MUTUALS: User[] = [
+// Mock users for INITIAL_BOOKS (not used in app, just for reference)
+const MOCK_USERS: User[] = [
   { username: 'jemma_b', displayName: 'Jemma Blair', isOnline: true, activity: 'Reading', position: [5, 0, -15], isMutual: true, points: 240, admirersCount: 1200, mutualsCount: 88, strikes: 0 },
   { username: 'mark_da_don', displayName: 'Marcus D.', isOnline: true, activity: 'Writing', position: [-12, 0, 8], isMutual: true, points: 15, admirersCount: 450, mutualsCount: 12, strikes: 0 },
 ];
@@ -440,7 +443,7 @@ const INITIAL_BOOKS: Book[] = [
   {
     id: 'e1',
     title: 'Cybergirl',
-    author: MUTUALS[0],
+    author: MOCK_USERS[0],
     coverColor: '#2b2d42',
     
     category: 'Trending',
@@ -468,7 +471,7 @@ const INITIAL_BOOKS: Book[] = [
   {
     id: 'p1',
     title: 'Futuregirl',
-    author: MUTUALS[1],
+    author: MOCK_USERS[1],
     coverColor: '#b8860b',
     
     category: 'Recommended',
@@ -495,7 +498,7 @@ const INITIAL_BOOKS: Book[] = [
   {
     id: 'e2',
     title: 'Lovergirl',
-    author: MUTUALS[0],
+    author: MOCK_USERS[0],
     coverColor: '#d4a574',
     
     category: 'Trending',
@@ -717,6 +720,29 @@ const App: React.FC = () => {
 
   // Users loaded from Firestore
   const [registeredUsers, setRegisteredUsers] = useState<any[]>([]);
+  const [activeCommentChapterKey, setActiveCommentChapterKey] = useState<string | null>(null);
+
+  // Relationships state (Firestore real-time)
+  const [relationships, setRelationships] = useState<Relationship[]>([]);
+
+  // Compute mutuals from relationships and registeredUsers
+  const MUTUALS = useMemo(() => {
+    if (!user.username) return [];
+    const myAdmiring = relationships.filter(r => r.admirer === user.username).map(r => r.target);
+    const admiringMe = relationships.filter(r => r.target === user.username).map(r => r.admirer);
+    const mutualUsernames = myAdmiring.filter(username => admiringMe.includes(username));
+    return registeredUsers.filter(u => mutualUsernames.includes(u.username)).map(u => ({
+      ...u,
+      isMutual: true,
+      isOnline: u.isOnline || false,
+      activity: u.activity || 'Idle' as const,
+      position: u.position || [0, 0, 0] as [number, number, number],
+      points: u.points || 0,
+      admirersCount: u.admirersCount || 0,
+      mutualsCount: u.mutualsCount || 0,
+      strikes: u.strikes || 0
+    }));
+  }, [user.username, relationships, registeredUsers]);
 
   const isAdmin = ADMIN_USERNAMES.includes(user.username);
 
@@ -735,9 +761,6 @@ const App: React.FC = () => {
 
   // Reports state (Firestore real-time)
   const [reports, setReports] = useState<Report[]>([]);
-
-  // Relationships state (Firestore real-time)
-  const [relationships, setRelationships] = useState<Relationship[]>([]);
 
   // Notifications state (Firestore real-time)
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -1059,19 +1082,30 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // Load all registered users from Firestore and populate avatar configs
+  // Subscribe to all registered users in real-time for online status and reading activity
   useEffect(() => {
-    fbService.getAllUsers().then((users: any[]) => {
+    const unsubscribe = fbService.subscribeToUsers((users: any[]) => {
       setRegisteredUsers(users);
       // Pre-populate avatar configs for all users so profile views show avatars
       const configs: Record<string, AvatarConfig> = {};
+      const unlocked: Record<string, string[]> = {};
+      const readingAct: Record<string, any[]> = {};
       users.forEach((u: any) => {
         if (u.avatarConfig && u.username) configs[u.username] = u.avatarConfig;
+        if (u.unlockedItems && u.username) unlocked[u.username] = u.unlockedItems;
+        if (u.readingActivity && u.username) readingAct[u.username] = u.readingActivity;
       });
       if (Object.keys(configs).length > 0) {
         setAllAvatarConfigs(prev => ({ ...prev, ...configs }));
       }
-    }).catch(console.error);
+      if (Object.keys(unlocked).length > 0) {
+        setAllUnlockedItems(prev => ({ ...prev, ...unlocked }));
+      }
+      if (Object.keys(readingAct).length > 0) {
+        setReadingActivity(prev => ({ ...prev, ...readingAct }));
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
   // ===== FIRESTORE REAL-TIME SUBSCRIPTIONS =====
@@ -1098,7 +1132,9 @@ const App: React.FC = () => {
       setNotifications(notifs.map(n => ({
         id: n.id, title: n.title, message: n.message, icon: n.icon,
         timestamp: n.timestamp ? new Date(n.timestamp) : new Date(),
-        recipient: n.recipient, sender: n.sender, read: n.read
+        recipient: n.recipient, sender: n.sender, read: n.read,
+        targetId: n.targetId,
+        targetChapterIndex: n.targetChapterIndex
       })));
     });
     return () => unsub();
@@ -1115,6 +1151,23 @@ const App: React.FC = () => {
     });
     return () => unsub();
   }, []);
+
+  // Update user activity based on current view
+  useEffect(() => {
+    if (!firebaseUid || !user.username) return;
+    
+    let newActivity: 'Reading' | 'Writing' | 'Idle' = 'Idle';
+    if (view === 'reading') {
+      newActivity = 'Reading';
+    } else if (view === 'write' || view === 'publishing') {
+      newActivity = 'Writing';
+    }
+    
+    if (user.activity !== newActivity) {
+      setUser(prev => ({ ...prev, activity: newActivity }));
+      fbService.updateUserProfile(firebaseUid, { activity: newActivity }).catch(console.error);
+    }
+  }, [view, firebaseUid, user.username]);
 
   // Subscribe to reports
   useEffect(() => {
@@ -1364,6 +1417,70 @@ const App: React.FC = () => {
     setFirebaseUid(null);
     setUserDataLoaded(false);
     setView('login');
+  };
+
+   const handleNotificationClick = (n: NotificationItem) => {
+    console.log('[Notification Click]', n);
+    
+    // Handle comment notifications - link to comment
+    if (n.title.includes('Comment')) {
+      if (n.targetId) {
+        const targetBook = books.find(b => b.id === n.targetId);
+        if (targetBook) {
+          setSelectedBook(targetBook);
+          setActiveCommentChapterKey(`${n.targetId}_${n.targetChapterIndex || 0}`);
+          setView('comments');
+        }
+      }
+      return;
+    }
+    
+    // Handle chapter like notifications - link to book
+    if (n.title.includes('Liked') || n.title === 'Chapter Liked') {
+      if (n.targetId) {
+        const targetBook = books.find(b => b.id === n.targetId);
+        if (targetBook) {
+          setSelectedBook(targetBook);
+          setView('book-detail');
+        }
+      }
+      return;
+    }
+    
+    // Handle admirer/mutual notifications
+    if (n.title === 'New Admirer' || n.title === 'Mutual Connection!') {
+      const username = n.targetId || n.sender;
+      if (username) {
+        const targetUser = MUTUALS.find(u => u.username === username) || registeredUsers.find(u => u.username === username);
+        if (targetUser) {
+          setSelectedProfileUser(targetUser);
+          setView('profile');
+        }
+      }
+      return;
+    }
+    
+    // Handle message notifications
+    if (n.title.includes('Message')) {
+      const chatUser = n.targetId || n.sender;
+      if (chatUser) {
+        setSelectedChatUser(chatUser);
+        setView('chat-conversation');
+      }
+      return;
+    }
+    
+    // Handle new book/chapter notifications
+    if (n.title === 'New Book' || n.title === 'New Chapter') {
+      if (n.targetId) {
+        const targetBook = books.find(b => b.id === n.targetId);
+        if (targetBook) {
+          setSelectedBook(targetBook);
+          setView('book-detail');
+        }
+      }
+      return;
+    }
   };
 
   const handleLogin = async () => {
@@ -2218,6 +2335,13 @@ const handleSpinWheel = () => {
         else userActivity.unshift({ bookId, progress: scrollProgress, lastRead: new Date().toISOString() });
         return { ...prev, [user.username]: userActivity.slice(0, 10) };
       });
+      // Update user activity status to "Reading"
+      if (user.activity !== 'Reading') {
+        setUser(prev => ({ ...prev, activity: 'Reading' }));
+        if (firebaseUid) {
+          fbService.updateUserProfile(firebaseUid, { activity: 'Reading' }).catch(console.error);
+        }
+      }
   };
 
   const handleShareBook = async (book: Book) => {
@@ -2909,15 +3033,16 @@ const handleSpinWheel = () => {
                 {sortedNotifs.length > 0 ? sortedNotifs.map((n) => (
                 <div
                     key={n.id}
-                    className={`p-5 rounded-[1.5rem] border flex gap-4 items-start ${!n.read ? 'bg-accent/10 border-accent/20' : 'bg-accent/5 border-accent/10'}`}
+                    onClick={() => handleNotificationClick(n)}
+                    className={`p-5 rounded-[1.5rem] border flex gap-4 cursor-pointer items-start hover:opacity-75 transition-opacity ${!n.read ? 'bg-accent/10 border-accent/20' : 'bg-accent/5 border-accent/10'}`}
                 >
-                    <div className="relative shrink-0">
+                    <div className="relative shrink-0 pointer-events-none">
                       <div className="w-12 h-12 rounded-2xl bg-accent text-white flex items-center justify-center">
                         <span className="material-icons-round">{n.icon}</span>
                       </div>
                       {!n.read && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white" />}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 pointer-events-none">
                     <p className={`text-xs font-bold ${!n.read ? 'text-black' : 'text-gray-600'}`}>{n.title}</p>
                     <p className="text-[10px] text-gray-400">{n.message}</p>
                     </div>

@@ -163,6 +163,12 @@ export const getAllUsers = async () => {
   return snapshot.docs.map(d => ({ uid: d.id, ...d.data() }));
 };
 
+export const subscribeToUsers = (callback: (users: any[]) => void): FsUnsubscribe => {
+  return onSnapshot(collection(db, 'users'), (snapshot: QuerySnapshot) => {
+    callback(snapshot.docs.map(d => ({ uid: d.id, ...d.data() })));
+  });
+};
+
 export const getUserByUsername = async (username: string) => {
   const usernameDoc = await getDoc(doc(db, 'usernames', username.toLowerCase()));
   if (!usernameDoc.exists()) return null;
