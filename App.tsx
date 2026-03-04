@@ -1513,6 +1513,11 @@ const App: React.FC = () => {
    const handleNotificationClick = (n: NotificationItem) => {
     console.log('[Notification Click]', n);
     
+    // Mark notification as read when clicked
+    if (n.id) {
+      fbService.markNotificationRead(n.id).catch(console.error);
+    }
+    
     // Handle comment notifications - link to comment
     if (n.title.includes('Comment')){
       if (n.targetId) {
