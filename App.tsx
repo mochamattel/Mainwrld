@@ -3091,6 +3091,13 @@ const handleSpinWheel = () => {
                     avatarConfig={avatarConfig}
                     containerClassName="absolute left-1/2"
                     containerStyle={{ width: '140px', height: '194px', transform: 'translateX(-50%) scale(2.2)', transformOrigin: 'top center', top: '8%' }}
+                    hairShrink={0.92}
+                    hairShift={-0.05}
+                    hairStyleOverride={(() => {
+                      const pos = getHairPosition(avatarConfig.hairId, 0.91, -0.05);
+                      const top = parseFloat(pos.top);
+                      return { ...pos, top: `${(top + 0.4).toFixed(3)}%` };
+                    })()}
                   />
                 </div>
               ) : (
