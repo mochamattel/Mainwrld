@@ -403,6 +403,40 @@ const getAvatarItemPath = (category: AvatarCategory, id: string): string => {
   return item?.path || '';
 };
 
+interface AvatarLayersProps {
+  avatarConfig: AvatarConfig;
+  containerClassName?: string;
+  containerStyle?: React.CSSProperties;
+  faceShrink?: number;
+  hairShrink?: number;
+  hairShift?: number;
+  faceStyleOverride?: React.CSSProperties;
+  hairStyleOverride?: React.CSSProperties;
+}
+
+const AvatarLayers = ({
+  avatarConfig,
+  containerClassName,
+  containerStyle,
+  faceShrink = 0.94,
+  hairShrink = 0.918,
+  hairShift = 0.33,
+  faceStyleOverride,
+  hairStyleOverride,
+}: AvatarLayersProps) => {
+  const faceStyle = faceStyleOverride ?? getFacePosition(avatarConfig.faceId, faceShrink);
+  const hairStyle = hairStyleOverride ?? getHairPosition(avatarConfig.hairId, hairShrink, hairShift);
+
+  return (
+    <div className={containerClassName} style={containerStyle}>
+      <img src={getAvatarItemPath('body', avatarConfig.bodyId)} className="absolute inset-0 w-full h-full object-contain" style={{ zIndex: 1 }} />
+      {avatarConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', avatarConfig.faceId)} className="absolute" style={{ zIndex: 2, ...faceStyle }} />}
+      <img src={getAvatarItemPath('outfit', avatarConfig.outfitId)} className="absolute inset-0 w-full h-full object-contain" style={{ zIndex: 3 }} />
+      {avatarConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', avatarConfig.hairId)} className="absolute" style={{ zIndex: 4, ...hairStyle }} />}
+    </div>
+  );
+};
+
 // Helper: renders a cover image inside a book cover div, or fallback title if no image
 const CoverImg = ({ book }: { book: Book }) => book.coverImage ? (
   <img src={book.coverImage} className="absolute inset-0 w-full h-full object-cover z-0" />
@@ -712,6 +746,29 @@ const App: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [moveDir, setMoveDir] = useState(new THREE.Vector3());
   const [readerSettings, setReaderSettings] = useState({ fontSize: 13, inverted: false, scrollMode: true });
+
+  useEffect(() => {
+    if (view !== 'home') return;
+
+    const preventClipboard = (e: Event) => e.preventDefault();
+    const preventClipboardShortcuts = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && ['c', 'x', 'v'].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('copy', preventClipboard);
+    document.addEventListener('cut', preventClipboard);
+    document.addEventListener('paste', preventClipboard);
+    document.addEventListener('keydown', preventClipboardShortcuts);
+
+    return () => {
+      document.removeEventListener('copy', preventClipboard);
+      document.removeEventListener('cut', preventClipboard);
+      document.removeEventListener('paste', preventClipboard);
+      document.removeEventListener('keydown', preventClipboardShortcuts);
+    };
+  }, [view]);
 
   const [likedBooks, setLikedBooks] = useState<Set<string>>(new Set());
   const likedBooksInteracted = useRef(false);
@@ -1147,7 +1204,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsub = fbService.subscribeToComments((comments: any[]) => {
       setAllComments(comments.map(c => ({
-        id: c.id, bookId: c.bookId, chapterIndex: c.chapterIndex,
+        id: c.id || c.commentId, bookId: c.bookId, chapterIndex: c.chapterIndex,
         author: c.author, authorUsername: c.authorUsername, text: c.text,
         likes: c.likes || 0, likedBy: c.likedBy || [], timestamp: c.timestamp || 'Now'
       })));
@@ -1218,7 +1275,7 @@ const App: React.FC = () => {
       // Load item price overrides
       if (profile.itemPriceOverrides) setItemPriceOverrides(profile.itemPriceOverrides);
       // Load earned points tracking + membership + chapter limits
-      if (profile.dailyEarnedPoints !== undefined || profile.lastPointsReset !== undefined || profile.membershipStartDate || profile.dailyChaptersPublished !== undefined) {
+      if (profile.dailyEarnedPoints !== undefined || profile.lastPointsReset !== undefined || profile.membershipStartDate !== undefined || profile.lastMembershipRewardDate !== undefined || profile.dailyChaptersPublished !== undefined) {
         setUser(prev => ({
           ...prev,
           dailyEarnedPoints: profile.dailyEarnedPoints || 0,
@@ -1228,6 +1285,14 @@ const App: React.FC = () => {
           dailyChaptersPublished: profile.dailyChaptersPublished || 0,
           lastChapterPublishReset: profile.lastChapterPublishReset || 0,
         }));
+      }
+      if (profile.isPremium && !profile.membershipStartDate) {
+        const membershipStartNow = Date.now();
+        setUser(prev => ({
+          ...prev,
+          membershipStartDate: prev.membershipStartDate || membershipStartNow,
+        }));
+        fbService.updateUserProfile(firebaseUid, { membershipStartDate: membershipStartNow }).catch(console.error);
       }
       // Load last claimed points timestamp
       if (profile.lastClaimedPoints) setLastClaimedPoints(profile.lastClaimedPoints);
@@ -1434,6 +1499,7 @@ const App: React.FC = () => {
         const targetBook = books.find(b => b.id === n.targetId);
         if (targetBook) {
           setSelectedBook(targetBook);
+          setReadingChapterIndex(n.targetChapterIndex || 0);
           setActiveCommentChapterKey(`${n.targetId}_${n.targetChapterIndex || 0}`);
           // Scroll to the specific comment if commentId is available
           if (n.commentId) {
@@ -1907,6 +1973,16 @@ const App: React.FC = () => {
     showToast(`+${finalAmount} points — ${reason}`, 'emoji_events');
   };
 
+  const awardMembershipBonus = (amount: number, reason: string, rewardedAt: number) => {
+    if (amount <= 0) return;
+    setUser(prev => ({
+      ...prev,
+      points: prev.points + amount,
+      lastMembershipRewardDate: rewardedAt,
+    }));
+    showToast(`+${amount} points — ${reason}`, 'emoji_events');
+  };
+
   const handleClaimPoints = () => {
     const now = Date.now();
     if (lastClaimedPoints && now - lastClaimedPoints < 24 * 60 * 60 * 1000) {
@@ -1998,13 +2074,11 @@ const handleSpinWheel = () => {
       const msIn25Hours = 25 * 60 * 60 * 1000;
       if (!user.lastMembershipRewardDate) {
         if (now - user.membershipStartDate >= msIn25Hours) {
-          awardPoints(200, "Membership Reward");
-          setUser(prev => ({ ...prev, lastMembershipRewardDate: now }));
+          awardMembershipBonus(200, "Membership Reward", now);
         }
       } else {
         if (now - user.lastMembershipRewardDate >= msInYear) {
-          awardPoints(200, "Annual Membership Reward");
-          setUser(prev => ({ ...prev, lastMembershipRewardDate: now }));
+          awardMembershipBonus(200, "Annual Membership Reward", now);
         }
       }
     };
@@ -2274,9 +2348,13 @@ const handleSpinWheel = () => {
   };
 
 
-  const postComment = (text: string, chapterIndex?: number) => {
+  const postComment = async (text: string, chapterIndex?: number) => {
   if (selectedBook?.commentsEnabled === false) {
     showToast("Comments Disabled");
+    return;
+  }
+  if (!selectedBook?.id) {
+    showToast('No book selected for comment.', 'error');
     return;
   }
   if (containsBadWord(text)) {
@@ -2296,24 +2374,28 @@ const handleSpinWheel = () => {
     timestamp: new Date().toISOString()
   };
 
-  fbService.addCommentDoc(newComment).catch(console.error);
+  try {
+    const createdCommentId = await fbService.addCommentDoc(newComment);
 
-  const chapterName = chapterIndex !== undefined && selectedBook.chapters?.[chapterIndex]
-    ? ` (${selectedBook.chapters[chapterIndex].title})`
-    : '';
-  addNotification(
-    'New Comment',
-    `${user.displayName} commented on "${selectedBook.title}"${chapterName}`,
-    'chat_bubble',
-    selectedBook.author.username,
-    user.username,
-    selectedBook.id,
-    chapterIndex,
-    newComment.id
-  );
+    const chapterName = chapterIndex !== undefined && selectedBook.chapters?.[chapterIndex]
+      ? ` (${selectedBook.chapters[chapterIndex].title})`
+      : '';
+    addNotification(
+      'New Comment',
+      `${user.displayName} commented on "${selectedBook.title}"${chapterName}`,
+      'chat_bubble',
+      selectedBook.author.username,
+      user.username,
+      selectedBook.id,
+      chapterIndex,
+      createdCommentId || newComment.id
+    );
 
-  showToast("Your comment has been successfully added.",
-  );
+    showToast("Your comment has been successfully added.");
+  } catch (error) {
+    console.error(error);
+    showToast('Failed to post comment. Please try again.', 'error');
+  }
 };
 
 
@@ -2326,7 +2408,10 @@ const handleSpinWheel = () => {
       fbService.updateComment(commentId, {
         likes: newLikes,
         likedBy: [...likedBy, user.username]
-      }).catch(console.error);
+      }).catch((error) => {
+        console.error(error);
+        showToast('Failed to like comment. Please try again.', 'error');
+      });
       const recipientUsername = (comment as any).authorUsername || comment.author;
       addNotification('Comment Liked', `${user.displayName} liked your comment: "${comment.text.substring(0, 20)}..."`, 'favorite_border', recipientUsername);
 
@@ -2493,10 +2578,24 @@ const handleSpinWheel = () => {
               </div>
             {/* D-Pad */}
             <div className="absolute bottom-32 right-8 w-32 h-32 flex items-center justify-center pointer-events-none">
-              <div className="grid grid-cols-3 gap-1 pointer-events-auto">
-                <div /><button onPointerDown={() => setMoveDir(new THREE.Vector3(0, 0, -1))} onPointerUp={() => setMoveDir(new THREE.Vector3(0,0,0))} className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center text-black/20"><span className="material-icons-round">keyboard_arrow_up</span></button><div />
-                <button onPointerDown={() => setMoveDir(new THREE.Vector3(-1, 0, 0))} onPointerUp={() => setMoveDir(new THREE.Vector3(0,0,0))} className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center text-black/20"><span className="material-icons-round">keyboard_arrow_left</span></button><div /><button onPointerDown={() => setMoveDir(new THREE.Vector3(1, 0, 0))} onPointerUp={() => setMoveDir(new THREE.Vector3(0,0,0))} className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center text-black/20"><span className="material-icons-round">keyboard_arrow_right</span></button>
-                <div /><button onPointerDown={() => setMoveDir(new THREE.Vector3(0, 0, 1))} onPointerUp={() => setMoveDir(new THREE.Vector3(0,0,0))} className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center text-black/20"><span className="material-icons-round">keyboard_arrow_down</span></button><div />
+              <div className="grid grid-cols-3 gap-1 pointer-events-auto select-none" style={{ WebkitTapHighlightColor: 'transparent', WebkitTouchCallout: 'none' }}>
+                <div />
+                <button onPointerDown={() => setMoveDir(new THREE.Vector3(0, 0, -1))} onPointerUp={() => setMoveDir(new THREE.Vector3(0,0,0))} className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center text-black/20 select-none touch-manipulation" style={{ WebkitTapHighlightColor: 'transparent', WebkitTouchCallout: 'none' }}>
+                  <span className="material-icons-round select-none">keyboard_arrow_up</span>
+                </button>
+                <div />
+                <button onPointerDown={() => setMoveDir(new THREE.Vector3(-1, 0, 0))} onPointerUp={() => setMoveDir(new THREE.Vector3(0,0,0))} className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center text-black/20 select-none touch-manipulation" style={{ WebkitTapHighlightColor: 'transparent', WebkitTouchCallout: 'none' }}>
+                  <span className="material-icons-round select-none">keyboard_arrow_left</span>
+                </button>
+                <div />
+                <button onPointerDown={() => setMoveDir(new THREE.Vector3(1, 0, 0))} onPointerUp={() => setMoveDir(new THREE.Vector3(0,0,0))} className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center text-black/20 select-none touch-manipulation" style={{ WebkitTapHighlightColor: 'transparent', WebkitTouchCallout: 'none' }}>
+                  <span className="material-icons-round select-none">keyboard_arrow_right</span>
+                </button>
+                <div />
+                <button onPointerDown={() => setMoveDir(new THREE.Vector3(0, 0, 1))} onPointerUp={() => setMoveDir(new THREE.Vector3(0,0,0))} className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center text-black/20 select-none touch-manipulation" style={{ WebkitTapHighlightColor: 'transparent', WebkitTouchCallout: 'none' }}>
+                  <span className="material-icons-round select-none">keyboard_arrow_down</span>
+                </button>
+                <div />
               </div>
             </div>
           </div>
@@ -2808,6 +2907,7 @@ const handleSpinWheel = () => {
           onSelect={(b: Book) => { setSelectedBook(b); setView('book-detail'); }}
           users={[...registeredUsers.filter((u: any) => u.username !== user.username), ...MUTUALS.filter(m => !registeredUsers.some((u: any) => u.username === m.username) && m.username !== user.username)]}
           onUserSelect={(u: User) => { setSelectedProfileUser(u); setView('profile'); }}
+          avatarConfigs={allAvatarConfigs}
           blockedUsers={blockedUsers}
           readingActivity={readingActivity}
           currentUsername={user.username}
@@ -2961,12 +3061,11 @@ const handleSpinWheel = () => {
             <div className="p-6 flex flex-col items-center">
               {avatarConfig ? (
                 <div className="w-36 h-36 rounded-[3rem] overflow-hidden border-4 border-white shadow-2xl mb-6 relative bg-gray-50">
-                  <div className="absolute left-1/2" style={{ width: '140px', height: '194px', transform: 'translateX(-50%) scale(2.2)', transformOrigin: 'top center', top: '8%' }}>
-                    <img src={getAvatarItemPath('body', avatarConfig.bodyId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:1}} />
-                    {avatarConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', avatarConfig.faceId)} className="absolute" style={{zIndex:2, ...getFacePosition(avatarConfig.faceId, 0.94)}} />}
-                    <img src={getAvatarItemPath('outfit', avatarConfig.outfitId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:3}} />
-                    {avatarConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', avatarConfig.hairId)} className="absolute" style={{zIndex:4, ...getHairPosition(avatarConfig.hairId, 0.916, 0.31)}} />}
-                  </div>
+                  <AvatarLayers
+                    avatarConfig={avatarConfig}
+                    containerClassName="absolute left-1/2"
+                    containerStyle={{ width: '140px', height: '194px', transform: 'translateX(-50%) scale(2.2)', transformOrigin: 'top center', top: '8%' }}
+                  />
                 </div>
               ) : (
                 <div className="w-32 h-32 rounded-[3rem] bg-accent/5 flex items-center justify-center text-accent text-5xl font-bold mb-6 border-4 border-white shadow-2xl">{user.displayName[0]}</div>
@@ -3182,6 +3281,7 @@ const handleSpinWheel = () => {
           <PublicBookDetailPage
             currentUser={user}
             book={selectedBook}
+            totalCommentsCount={allComments.filter((c: any) => c.bookId === selectedBook.id).length}
             isOwned={getUserOwnedBookIds().has(selectedBook.id)}
             bookProgress={getUserBookProgress(selectedBook.id)}
             onBack={() => setView('explore')}
@@ -3354,7 +3454,7 @@ const handleSpinWheel = () => {
 
 // --- Subviews Components ---
 
-const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect, blockedUsers = new Set(), readingActivity = {}, currentUsername = '', userFavoriteGenres = [] }: any) => {
+const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect, avatarConfigs = {}, blockedUsers = new Set(), readingActivity = {}, currentUsername = '', userFavoriteGenres = [] }: any) => {
   const [showFilter, setShowFilter] = useState(false);
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -3597,7 +3697,17 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
                 <div className="relative">
                   <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-accent/20 to-accent/5 p-1 ring-2 ring-transparent group-hover:ring-accent transition-all">
                     <div className="w-full h-full rounded-full bg-white flex items-center justify-center text-accent text-xl font-black border-2 border-white shadow-sm overflow-hidden">
-                      {author.user.displayName[0]}
+                      {avatarConfigs[author.user.username] ? (
+                        <div className="relative w-full h-full">
+                          <AvatarLayers
+                            avatarConfig={avatarConfigs[author.user.username]}
+                            containerClassName="absolute left-1/2"
+                            containerStyle={{ width: '90px', height: '125px', transform: 'translateX(-50%) scale(1.42)', transformOrigin: 'top center', top: '6.5%' }}
+                          />
+                        </div>
+                      ) : (
+                        author.user.displayName[0]
+                      )}
                     </div>
                   </div>
                   <div className="absolute -bottom-1 -right-1 w-7 h-7 bg-black rounded-full flex items-center justify-center border-2 border-white shadow-md">
@@ -3759,12 +3869,11 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
       <div className="p-6 flex flex-col items-center">
         {avatarConfig ? (
           <div className="w-32 h-32 rounded-[3rem] overflow-hidden border-4 border-white shadow-2xl mb-6 relative bg-gray-50">
-            <div className="absolute left-1/2" style={{ width: '140px', height: '194px', transform: 'translateX(-50%) scale(2)', transformOrigin: 'top center', top: '8%' }}>
-              <img src={getAvatarItemPath('body', avatarConfig.bodyId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:1}} />
-              {avatarConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', avatarConfig.faceId)} className="absolute" style={{zIndex:2, ...getFacePosition(avatarConfig.faceId, 0.94)}} />}
-              <img src={getAvatarItemPath('outfit', avatarConfig.outfitId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:3}} />
-              {avatarConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', avatarConfig.hairId)} className="absolute" style={{zIndex:4, ...getHairPosition(avatarConfig.hairId, 0.918, 0.33)}} />}
-            </div>
+            <AvatarLayers
+              avatarConfig={avatarConfig}
+              containerClassName="absolute left-1/2"
+              containerStyle={{ width: '140px', height: '194px', transform: 'translateX(-50%) scale(2)', transformOrigin: 'top center', top: '8%' }}
+            />
           </div>
         ) : (
           <div className="w-32 h-32 rounded-[3rem] bg-gray-50 flex items-center justify-center text-gray-400 text-5xl font-bold mb-6 border-4 border-white shadow-2xl overflow-hidden">
@@ -3910,7 +4019,7 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
   );
 };
 
-const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack, onRead, onAuthorClick, isLiked, onLike, onSave, onRemove, isSaved, onReport, onShare, onAddToCart, onToggleFavorite, onUnpublish, onDelete, onMarkCompleted}: any) => {
+const PublicBookDetailPage = ({ currentUser, book, totalCommentsCount = 0, isOwned, bookProgress, onBack, onRead, onAuthorClick, isLiked, onLike, onSave, onRemove, isSaved, onReport, onShare, onAddToCart, onToggleFavorite, onUnpublish, onDelete, onMarkCompleted}: any) => {
   const isAuthor = currentUser.username === book.author.username;
 
   
@@ -3950,7 +4059,7 @@ const PublicBookDetailPage = ({ currentUser, book, isOwned, bookProgress, onBack
             <p className="text-[9px] text-gray-300 font-bold uppercase">Likes</p>
           </div>
           <div><p className="text-lg font-bold">{book.chaptersCount}</p><p className="text-[9px] text-gray-300 font-bold uppercase">Chapters</p></div>
-          <div><p className="text-lg font-bold">{book.commentsCount}</p><p className="text-[9px] text-gray-300 font-bold uppercase">Comments</p></div>
+          <div><p className="text-lg font-bold">{totalCommentsCount}</p><p className="text-[9px] text-gray-300 font-bold uppercase">Comments</p></div>
           
         </div>
 
@@ -5396,7 +5505,13 @@ const ChatListView = ({ currentUsername, relationships, registeredUsers, mutuals
               <div className="relative flex-shrink-0">
                 <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 text-xl font-bold overflow-hidden">
                   {avatarConfigs[conv.user.username] ? (
-                    <img src={getAvatarItemPath('Face', avatarConfigs[conv.user.username].faceId)} className="w-full h-full object-cover" />
+                    <div className="relative w-full h-full">
+                      <AvatarLayers
+                        avatarConfig={avatarConfigs[conv.user.username]}
+                        containerClassName="absolute left-1/2"
+                        containerStyle={{ width: '70px', height: '97px', transform: 'translateX(-50%) scale(1.35)', transformOrigin: 'top center', top: '8%' }}
+                      />
+                    </div>
                   ) : (
                     <span className="material-icons-round text-2xl">person</span>
                   )}
@@ -5475,12 +5590,11 @@ const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsern
           <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center overflow-hidden">
             {avatarConfig ? (
               <div className="relative w-full h-full">
-                <div className="absolute left-1/2" style={{ width: '70px', height: '97px', transform: 'translateX(-50%) scale(1)', transformOrigin: 'top center', top: '8%' }}>
-                  <img src={getAvatarItemPath('body', avatarConfig.bodyId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:1}} />
-                  {avatarConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', avatarConfig.faceId)} className="absolute" style={{zIndex:2, ...getFacePosition(avatarConfig.faceId, 0.94)}} />}
-                  <img src={getAvatarItemPath('outfit', avatarConfig.outfitId)} className="absolute inset-0 w-full h-full object-contain" style={{zIndex:3}} />
-                  {avatarConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', avatarConfig.hairId)} className="absolute" style={{zIndex:4, ...getHairPosition(avatarConfig.hairId, 0.918, 0.33)}} />}
-                </div>
+                <AvatarLayers
+                  avatarConfig={avatarConfig}
+                  containerClassName="absolute left-1/2"
+                  containerStyle={{ width: '70px', height: '97px', transform: 'translateX(-50%) scale(1)', transformOrigin: 'top center', top: '8%' }}
+                />
               </div>
             ) : (
               <span className="material-icons-round text-gray-400">person</span>
@@ -5568,6 +5682,11 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
   const [draftSaved, setDraftSaved] = useState(false);
   const [wordCount, setWordCount] = useState(0); // Reactive word count state
   const editorRef = useRef<HTMLDivElement>(null);
+  const loadedEditorTargetRef = useRef('');
+  const lastValidHtmlRef = useRef('');
+  const lastValidWordCountRef = useRef(0);
+  const hasShownNearLimitRef = useRef(false);
+  const hasShownMaxLimitRef = useRef(false);
   
   const myWorks = useMemo(() => books.filter((b: Book) => b.author.username === user.username), [books, user]);
   const selectedBook = useMemo(() => myWorks.find((w: Book) => w.id === selectedBookId), [myWorks, selectedBookId]);
@@ -5575,6 +5694,47 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
   const calculateWordCount = useCallback((text: string) => {
     const cleanText = text.replace(/<\/?[^>]+(>|$)/g, "").trim();
     return cleanText === '' ? 0 : cleanText.split(/\s+/).length;
+  }, []);
+
+  const getWords = useCallback((text: string) => {
+    const trimmed = text.trim();
+    return trimmed ? trimmed.split(/\s+/) : [];
+  }, []);
+
+  const ensureCaretVisible = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const scrollContainer = editor.closest('.overflow-y-auto') as HTMLElement | null;
+    if (!scrollContainer) {
+      editor.scrollIntoView({ block: 'end', behavior: 'smooth' });
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        return;
+      }
+
+      const range = selection.getRangeAt(0).cloneRange();
+      range.collapse(false);
+      const rect = range.getBoundingClientRect();
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const padding = 56;
+
+      if (rect.top === 0 && rect.bottom === 0) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        return;
+      }
+
+      if (rect.bottom > containerRect.bottom - padding) {
+        scrollContainer.scrollTop += rect.bottom - (containerRect.bottom - padding);
+      } else if (rect.top < containerRect.top + padding) {
+        scrollContainer.scrollTop -= (containerRect.top + padding) - rect.top;
+      }
+    });
   }, []);
 
   // Use ref for wordCount inside callback to avoid re-creating updateWordCount on every keystroke
@@ -5585,19 +5745,103 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
     if (editorRef.current) {
       const text = editorRef.current.innerText || "";
       const count = calculateWordCount(text);
+      
       if (count > MAX_WORD_COUNT) {
-        const words = text.trim().split(/\s+/);
-        const truncated = words.slice(0, MAX_WORD_COUNT).join(' ');
-        editorRef.current.innerText = truncated;
-        setWordCount(MAX_WORD_COUNT);
+        editorRef.current.innerHTML = lastValidHtmlRef.current;
+        setWordCount(lastValidWordCountRef.current);
+        if (!hasShownMaxLimitRef.current) {
+          onNotify('Word limit reached', `Maximum ${MAX_WORD_COUNT.toLocaleString()} words allowed.`);
+          hasShownMaxLimitRef.current = true;
+        }
         return;
       }
-      if (count >= MAX_WORD_COUNT - 100 && wordCountRef.current < MAX_WORD_COUNT - 100) {
-        onNotify?.('Approaching limit', 'You are in your last 100 words!');
+
+      hasShownMaxLimitRef.current = false;
+      
+      if (count >= MAX_WORD_COUNT - 100 && !hasShownNearLimitRef.current) {
+        onNotify('Approaching limit', 'You are in your last 100 words!');
+        hasShownNearLimitRef.current = true;
       }
+
+      if (count < MAX_WORD_COUNT - 100) {
+        hasShownNearLimitRef.current = false;
+      }
+
+      lastValidHtmlRef.current = editorRef.current.innerHTML;
+      lastValidWordCountRef.current = count;
+      
       setWordCount(count);
     }
   }, [calculateWordCount, onNotify]);
+
+  const handleBeforeInput = useCallback((event: React.FormEvent<HTMLDivElement>) => {
+    const nativeEvent = event.nativeEvent as InputEvent;
+    if (!nativeEvent?.inputType?.startsWith('insert') || !editorRef.current) return;
+
+    const currentCount = calculateWordCount(editorRef.current.innerText || '');
+    const remainingWords = MAX_WORD_COUNT - currentCount;
+
+    if (remainingWords <= 0) {
+      event.preventDefault();
+      if (!hasShownMaxLimitRef.current) {
+        onNotify('Word limit reached', `Maximum ${MAX_WORD_COUNT.toLocaleString()} words allowed.`);
+        hasShownMaxLimitRef.current = true;
+      }
+      return;
+    }
+
+    const insertedText = nativeEvent.data || '';
+    if (!insertedText.trim()) return;
+
+    const insertedWords = getWords(insertedText);
+    if (insertedWords.length > remainingWords) {
+      event.preventDefault();
+      const allowedText = insertedWords.slice(0, remainingWords).join(' ');
+      if (allowedText) {
+        document.execCommand('insertText', false, allowedText);
+        updateWordCount();
+        ensureCaretVisible();
+      }
+      onNotify('Word limit reached', `Only ${remainingWords} word${remainingWords === 1 ? '' : 's'} remaining.`);
+    }
+  }, [calculateWordCount, getWords, onNotify, updateWordCount, ensureCaretVisible]);
+
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
+    if (!editorRef.current) return;
+
+    const pastedText = event.clipboardData.getData('text/plain') || '';
+    const pastedWords = getWords(pastedText);
+    if (pastedWords.length === 0) return;
+
+    event.preventDefault();
+
+    const currentCount = calculateWordCount(editorRef.current.innerText || '');
+    const remainingWords = MAX_WORD_COUNT - currentCount;
+
+    if (remainingWords <= 0) {
+      if (!hasShownMaxLimitRef.current) {
+        onNotify('Word limit reached', `Maximum ${MAX_WORD_COUNT.toLocaleString()} words allowed.`);
+        hasShownMaxLimitRef.current = true;
+      }
+      return;
+    }
+
+    const allowedText = pastedWords.slice(0, remainingWords).join(' ');
+    if (allowedText) {
+      document.execCommand('insertText', false, allowedText);
+      updateWordCount();
+      ensureCaretVisible();
+    }
+
+    if (pastedWords.length > remainingWords) {
+      onNotify('Word limit reached', `Only ${remainingWords} word${remainingWords === 1 ? '' : 's'} were pasted.`);
+    }
+  }, [calculateWordCount, getWords, onNotify, updateWordCount, ensureCaretVisible]);
+
+  const handleEditorInput = useCallback(() => {
+    updateWordCount();
+    ensureCaretVisible();
+  }, [updateWordCount, ensureCaretVisible]);
 
   useEffect(() => {
     document.execCommand('defaultParagraphSeparator', false, 'p');
@@ -5614,6 +5858,9 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
   }, [selectedBookId, selectedBook]);
 
   useEffect(() => {
+    const targetKey = `${selectedBookId}:${selectedChapterIndex}`;
+    if (loadedEditorTargetRef.current === targetKey) return;
+
     let content = '';
     if (selectedBook && selectedChapterIndex !== 'new') {
       const idx = parseInt(selectedChapterIndex);
@@ -5623,12 +5870,14 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
     }
     
     if (editorRef.current) {
-      if (editorRef.current.innerHTML !== content) {
-        editorRef.current.innerHTML = content;
-        updateWordCount();
-      }
+      loadedEditorTargetRef.current = targetKey;
+      editorRef.current.innerHTML = content;
+      lastValidHtmlRef.current = content;
+      const nextCount = calculateWordCount(editorRef.current.innerText || '');
+      lastValidWordCountRef.current = nextCount;
+      setWordCount(nextCount);
     }
-  }, [selectedChapterIndex, selectedBookId, selectedBook, updateWordCount]);
+  }, [selectedChapterIndex, selectedBookId, selectedBook, calculateWordCount]);
 
   const execAction = (cmd: string, val: string | null = null) => {
     if (!editorRef.current) return;
@@ -5703,7 +5952,7 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
               <p className="text-xs text-gray-300 mt-1">Completed works cannot be edited</p>
             </div>
           ) : (
-            <div ref={editorRef} contentEditable="true" inputMode="text" role="textbox" aria-multiline="true" spellCheck="true" className="w-full min-h-[400px] bg-transparent border-none outline-none text-base leading-relaxed placeholder:text-gray-200 resize-none no-scrollbar focus:ring-0 rich-editor" style={{ WebkitUserSelect: 'text', userSelect: 'text', WebkitTouchCallout: 'default', touchAction: 'manipulation' }} onInput={updateWordCount} onTouchEnd={(e) => { e.currentTarget.focus(); }} />
+            <div ref={editorRef} contentEditable="true" inputMode="text" role="textbox" aria-multiline="true" spellCheck="true" className="w-full min-h-[400px] bg-transparent border-none outline-none text-base leading-relaxed placeholder:text-gray-200 resize-none no-scrollbar focus:ring-0 rich-editor" style={{ WebkitUserSelect: 'text', userSelect: 'text', WebkitTouchCallout: 'default', touchAction: 'manipulation' }} onBeforeInput={handleBeforeInput} onPaste={handlePaste} onInput={handleEditorInput} onTouchEnd={(e) => { e.currentTarget.focus(); ensureCaretVisible(); }} />
           )}
         </div>
       </div>
@@ -5711,14 +5960,13 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
       <div className="p-6 bg-white border-t border-gray-50">
         <div className="flex justify-between items-center mb-6">
           <div className="flex flex-col">
-            <span className={`text-[10px] font-bold uppercase tracking-widest ${wordCount < MIN_WORD_COUNT ? 'text-red-400' : (wordCount >= MAX_WORD_COUNT - 100 ? 'text-yellow-500' : 'text-green-500')}`}>
+             <span className={`text-[10px] font-bold uppercase tracking-widest ${wordCount >= MAX_WORD_COUNT ? 'text-red-400' : (wordCount < MIN_WORD_COUNT ? 'text-red-400' : (wordCount >= MAX_WORD_COUNT - 100 ? 'text-yellow-500' : 'text-green-500'))}`}>
               {wordCount} / {MAX_WORD_COUNT} Words
             </span>
             <span className="text-[7px] text-gray-300 uppercase font-bold">
-              {wordCount < MIN_WORD_COUNT ? `Min ${MIN_WORD_COUNT} words to publish` : (wordCount >= MAX_WORD_COUNT - 100 ? 'Approaching max word count limit!' : 'Word count limit: 11,000')}
+              {wordCount >= MAX_WORD_COUNT ? 'Maximum word count reached!' : (wordCount < MIN_WORD_COUNT ? `Min ${MIN_WORD_COUNT} words to publish` : (wordCount >= MAX_WORD_COUNT - 100 ? 'Approaching max word count limit!' : 'Word count limit: 11,000'))}
             </span>
           </div>
-          <span className="text-[8px] font-bold text-gray-300 uppercase tracking-widest">Changes saved locally</span>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Button variant="outline" disabled={selectedBookId === 'new' && !newTitle.trim()} onClick={() => {
@@ -5923,11 +6171,20 @@ const CustomizationView = ({ user, setUser, onBack, avatarConfig, setAvatarConfi
       {/* 2D AVATAR PREVIEW */}
       <div className="flex-1 bg-gradient-to-b from-gray-50 to-gray-100 flex items-center justify-center p-4 min-h-0 relative overflow-hidden">
         {localConfig && (
-          <div className="relative w-52 h-72 md:w-64 md:h-96 transition-transform duration-300 ease-out" style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }}>
-            <img src={getAvatarItemPath('body', localConfig.bodyId)} alt="Body" className="absolute inset-0 w-full h-full object-contain" style={{ zIndex: 1 }} />
-            {localConfig.faceId !== 'no_face' && <img src={getAvatarItemPath('face', localConfig.faceId)} alt="Face" className="absolute" style={{ zIndex: 2, ...(adjustMode && adjustTarget === 'face' ? { width: `${adj.width}%`, left: `${adj.left}%`, top: `${adj.top}%` } : getFacePosition(localConfig.faceId)) }} />}
-            <img src={getAvatarItemPath('outfit', localConfig.outfitId)} alt="Outfit" className="absolute inset-0 w-full h-full object-contain" style={{ zIndex: 3 }} />
-            {localConfig.hairId !== 'none' && <img src={getAvatarItemPath('hair', localConfig.hairId)} alt="Hair" className="absolute" style={{ zIndex: 4, ...(adjustMode && adjustTarget === 'hair' ? { width: `${adj.width}%`, left: `${adj.left}%`, top: `${adj.top}%` } : getHairPosition(localConfig.hairId)) }} />}
+          <div className="relative w-52 md:w-64 aspect-[140/194] transition-transform duration-300 ease-out" style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }}>
+            <AvatarLayers
+              avatarConfig={localConfig}
+              containerClassName="relative w-full h-full"
+              faceShrink={0.96}
+              hairShrink={0.97}
+              hairShift={1}
+              faceStyleOverride={adjustMode && adjustTarget === 'face' ? { width: `${adj.width}%`, left: `${adj.left}%`, top: `${adj.top}%` } : undefined}
+              hairStyleOverride={adjustMode && adjustTarget === 'hair' ? { width: `${adj.width}%`, left: `${adj.left}%`, top: `${adj.top}%` } : (() => {
+                const pos = getHairPosition(localConfig.hairId, 0.91, -0.4);
+                const top = parseFloat(pos.top);
+                return { ...pos, top: `${(top - 0.80).toFixed(3)}%` };
+              })()}
+            />
           </div>
         )}
 

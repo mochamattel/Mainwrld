@@ -327,6 +327,14 @@ export const markNotificationsRead = async (recipientUsername: string) => {
   }
 };
 
+export const markNotificationRead = async (notificationId: string) => {
+  const q = query(collection(db, 'notifications'), where('id', '==', notificationId));
+  const snapshot = await getDocs(q);
+  for (const d of snapshot.docs) {
+    if (!d.data().read) await updateDoc(d.ref, { read: true });
+  }
+};
+
 export const subscribeToNotifications = (callback: (notifs: any[]) => void): Unsubscribe => {
   return onSnapshot(collection(db, 'notifications'), (snapshot: QuerySnapshot) => {
     callback(snapshot.docs.map(d => ({ ...d.data() })));
