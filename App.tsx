@@ -886,7 +886,7 @@ const App: React.FC = () => {
   const [cart, setCart] = useState<Book[]>([]);
 
   // Per-user book ownership and progress (loaded from Firestore user doc)
-  const [userBookData, setUserBookData] = useState<Record<string, { ownedBookIds: string[]; purchasedBookIds?: string[]; bookProgress: Record<string, { scrollProgress: number; chapterIndex: number }> }>>({});
+  const [userBookData, setUserBookData] = useState<Record<string, { ownedBookIds: string[]; purchasedBookIds?: string[]; bookProgress: Record<string, BookProgress> }>>({});
   // Keep a ref in sync so immediate Firestore writes always read the latest data
   const userBookDataRef = useRef(userBookData);
   userBookDataRef.current = userBookData;
@@ -918,13 +918,23 @@ const App: React.FC = () => {
     return new Set([...owned, ...purchased]);
   }, [userBookData, user.username]);
 
-  // Helper to get current user's progress for a book (returns { scrollProgress, chapterIndex })
-  const getUserBookProgress = useCallback((bookId: string): { scrollProgress: number; chapterIndex: number } => {
+  // Helper to get current user's progress for a book
+  const getUserBookProgress = useCallback((bookId: string): BookProgress => {
     const progress = userBookData[user.username]?.bookProgress?.[bookId];
     if (!progress) return { scrollProgress: 0, chapterIndex: 0 };
     // Handle old format migration
     if (typeof progress === 'number') return { scrollProgress: progress, chapterIndex: 0 };
-    return progress;
+    return {
+      scrollProgress: progress.scrollProgress ?? 0,
+      chapterIndex: progress.chapterIndex ?? 0,
+      scrollTopPx: progress.scrollTopPx,
+      scrollHeightPx: progress.scrollHeightPx,
+      clientHeightPx: progress.clientHeightPx,
+      scrollLeftPx: progress.scrollLeftPx,
+      scrollWidthPx: progress.scrollWidthPx,
+      clientWidthPx: progress.clientWidthPx,
+      savedAt: progress.savedAt,
+    };
   }, [userBookData, user.username]);
 
   // Helper to mark a book as owned for current user
@@ -943,11 +953,21 @@ const App: React.FC = () => {
     });
   }, [user.username]);
 
-  // Helper to update progress for current user (scroll progress + chapter index)
-  const setUserBookProgress = useCallback((bookId: string, scrollProgress: number, chapterIndex: number) => {
+  // Helper to update progress for current user (scroll progress + chapter index + exact position)
+  const setUserBookProgress = useCallback((bookId: string, scrollProgress: number, chapterIndex: number, exact?: Partial<BookProgress>) => {
     setUserBookData(prev => {
       const userData = prev[user.username] || { ownedBookIds: [], bookProgress: {} };
-      userData.bookProgress = { ...userData.bookProgress, [bookId]: { scrollProgress, chapterIndex } };
+      const existing = userData.bookProgress?.[bookId] || { scrollProgress: 0, chapterIndex: 0 };
+      userData.bookProgress = {
+        ...userData.bookProgress,
+        [bookId]: {
+          ...existing,
+          scrollProgress,
+          chapterIndex,
+          ...exact,
+          savedAt: Date.now(),
+        },
+      };
       return { ...prev, [user.username]: userData };
     });
   }, [user.username]);
@@ -2423,9 +2443,10 @@ const handleSpinWheel = () => {
       }
   };
 
-  const handleBookProgressUpdate = (bookId: string, scrollProgress: number, chapterIndex: number) => {
+    const handleBookProgressUpdate = (bookId: string, scrollProgress: number, chapterIndex: number, exact?: Partial<BookProgress>) => {
+      if (!userDataLoaded) return;
       // Save progress per-user (both scroll position and chapter index)
-      setUserBookProgress(bookId, scrollProgress, chapterIndex);
+      setUserBookProgress(bookId, scrollProgress, chapterIndex, exact);
       // Update reading activity
       setReadingActivity(prev => {
         const userActivity = [...(prev[user.username] || [])];
@@ -3301,6 +3322,13 @@ const handleSpinWheel = () => {
         );
 
       case 'reading':
+        if (!userDataLoaded) {
+          return (
+            <div className="fixed inset-0 bg-white flex items-center justify-center">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Loading reader...</p>
+            </div>
+          );
+        }
         const savedProgress = selectedBook ? getUserBookProgress(selectedBook.id) : { scrollProgress: 0, chapterIndex: 0 };
         return (
           <ReadingView
@@ -3308,6 +3336,7 @@ const handleSpinWheel = () => {
             book={selectedBook}
             initialScrollProgress={savedProgress.scrollProgress}
             initialChapterIndex={savedProgress.chapterIndex}
+            initialExactPosition={savedProgress}
             settings={readerSettings}
             setSettings={setReaderSettings}
             onBack={() => setView('book-detail')}
@@ -3318,7 +3347,7 @@ const handleSpinWheel = () => {
             isSaved={selectedBook ? isBookInLibrary(selectedBook.id) : false}
             canSave={selectedBook ? (user.username !== selectedBook.author.username && (getUserOwnedBookIds().has(selectedBook.id) || selectedBook.isFree || !selectedBook.isMonetized)) : false}
             chapterCommentsCount={allComments.filter((c: any) => c.bookId === selectedBook?.id && (c.chapterIndex ?? 0) === readingChapterIndex).length}
-            onProgressUpdate={(scrollProgress: number, chapterIndex: number) => { setReadingChapterIndex(chapterIndex); selectedBook && handleBookProgressUpdate(selectedBook.id, scrollProgress, chapterIndex); }}
+            onProgressUpdate={(scrollProgress: number, chapterIndex: number, exact?: Partial<BookProgress>) => { setReadingChapterIndex(chapterIndex); selectedBook && handleBookProgressUpdate(selectedBook.id, scrollProgress, chapterIndex, exact); }}
             onShare={() => selectedBook && handleShareBook(selectedBook)}
           />
         );
@@ -4357,13 +4386,19 @@ const ChapterAdBanner = ({ isPremium = false, inverted = false }: { isPremium?: 
   );
 };
 
-const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, settings, setSettings, onBack, onComments, likedChapters, onLike, onSave, isSaved, canSave, onProgressUpdate, onShare, chapterCommentsCount }: any) => {
+const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterIndex, initialExactPosition, settings, setSettings, onBack, onComments, likedChapters, onLike, onSave, isSaved, canSave, onProgressUpdate, onShare, chapterCommentsCount }: any) => {
   const [showOptions, setShowOptions] = useState(false);
   const [currentChapterIdx, setCurrentChapterIdx] = useState(initialChapterIndex || 0);
   const [localScrollProgress, setLocalScrollProgress] = useState(initialScrollProgress || 0);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageFlipRef = useRef<HTMLDivElement>(null);
- const touchStartRef = useRef(0);
+  const touchStartRef = useRef(0);
+  const suppressSaveRef = useRef(true);
+  const initialRef = useRef({
+    scrollProgress: initialScrollProgress || 0,
+    chapterIndex: initialChapterIndex || 0,
+    exact: initialExactPosition || {},
+  });
 
   // Prevent copy/paste and screenshots in reading view
   useEffect(() => {
@@ -4389,14 +4424,16 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (!settings.scrollMode) return;
     const target = e.currentTarget;
-    const progress = Math.round((target.scrollTop / (target.scrollHeight - target.clientHeight)) * 100);
+    const scrollable = Math.max(target.scrollHeight - target.clientHeight, 1);
+    const progress = Math.round((target.scrollTop / scrollable) * 100);
     setLocalScrollProgress(progress);
   };
 
   const handlePageFlipScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (settings.scrollMode) return;
     const target = e.currentTarget;
-    const progress = Math.round((target.scrollLeft / (target.scrollWidth - target.clientWidth)) * 100);
+    const scrollable = Math.max(target.scrollWidth - target.clientWidth, 1);
+    const progress = Math.round((target.scrollLeft / scrollable) * 100);
     setLocalScrollProgress(progress);
   };
 
@@ -4492,27 +4529,73 @@ const ReadingView = ({ currentUser, book, initialScrollProgress, initialChapterI
     };
   }, [handleForward, handleBackward]);
 
-  // Restore scroll position when component mounts or chapter changes
+  // Restore scroll position when component mounts
   useEffect(() => {
+    let cancelled = false;
+    let attempts = 0;
+
     const restoreScroll = () => {
+      if (cancelled) return;
+
       if (settings.scrollMode && containerRef.current) {
-        const scrollHeight = containerRef.current.scrollHeight - containerRef.current.clientHeight;
-        const targetScroll = (initialScrollProgress / 100) * scrollHeight;
-        containerRef.current.scrollTop = targetScroll;
+        const scrollableHeight = Math.max(containerRef.current.scrollHeight - containerRef.current.clientHeight, 0);
+        const exactTop = typeof initialRef.current.exact?.scrollTopPx === 'number'
+          ? initialRef.current.exact.scrollTopPx
+          : undefined;
+        let targetScroll = exactTop ?? ((initialRef.current.scrollProgress / 100) * scrollableHeight);
+
+        const savedHeight = initialRef.current.exact?.scrollHeightPx;
+        if (typeof exactTop === 'number' && typeof savedHeight === 'number' && savedHeight > 0 && savedHeight !== containerRef.current.scrollHeight) {
+          targetScroll = (exactTop / savedHeight) * containerRef.current.scrollHeight;
+        }
+
+        containerRef.current.scrollTop = Math.min(Math.max(targetScroll, 0), scrollableHeight);
       } else if (!settings.scrollMode && pageFlipRef.current) {
-        const scrollWidth = pageFlipRef.current.scrollWidth - pageFlipRef.current.clientWidth;
-        const targetScroll = (initialScrollProgress / 100) * scrollWidth;
-        pageFlipRef.current.scrollLeft = targetScroll;
+        const scrollableWidth = Math.max(pageFlipRef.current.scrollWidth - pageFlipRef.current.clientWidth, 0);
+        const exactLeft = typeof initialRef.current.exact?.scrollLeftPx === 'number'
+          ? initialRef.current.exact.scrollLeftPx
+          : undefined;
+        let targetScroll = exactLeft ?? ((initialRef.current.scrollProgress / 100) * scrollableWidth);
+
+        const savedWidth = initialRef.current.exact?.scrollWidthPx;
+        if (typeof exactLeft === 'number' && typeof savedWidth === 'number' && savedWidth > 0 && savedWidth !== pageFlipRef.current.scrollWidth) {
+          targetScroll = (exactLeft / savedWidth) * pageFlipRef.current.scrollWidth;
+        }
+
+        pageFlipRef.current.scrollLeft = Math.min(Math.max(targetScroll, 0), scrollableWidth);
+      }
+
+      attempts += 1;
+      if (attempts < 10 && !cancelled) {
+        setTimeout(restoreScroll, 120);
+      } else {
+        suppressSaveRef.current = false;
       }
     };
-    // Small delay to ensure content is rendered before scrolling
+
     const timer = setTimeout(restoreScroll, 100);
-    return () => clearTimeout(timer);
-  }, [initialScrollProgress, settings.scrollMode]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
   // Sync progress back to main state when it changes significantly (save both scroll and chapter)
   useEffect(() => {
-    onProgressUpdate(localScrollProgress, currentChapterIdx);
+    if (suppressSaveRef.current) return;
+
+    const exact: Partial<BookProgress> = {};
+    if (settings.scrollMode && containerRef.current) {
+      exact.scrollTopPx = containerRef.current.scrollTop;
+      exact.scrollHeightPx = containerRef.current.scrollHeight;
+      exact.clientHeightPx = containerRef.current.clientHeight;
+    } else if (!settings.scrollMode && pageFlipRef.current) {
+      exact.scrollLeftPx = pageFlipRef.current.scrollLeft;
+      exact.scrollWidthPx = pageFlipRef.current.scrollWidth;
+      exact.clientWidthPx = pageFlipRef.current.clientWidth;
+    }
+
+    onProgressUpdate(localScrollProgress, currentChapterIdx, exact);
   }, [localScrollProgress, currentChapterIdx, onProgressUpdate]);
 
   // Scroll to top when chapter changes (skip initial mount to allow restore)
@@ -6182,7 +6265,7 @@ const CustomizationView = ({ user, setUser, onBack, avatarConfig, setAvatarConfi
               hairStyleOverride={adjustMode && adjustTarget === 'hair' ? { width: `${adj.width}%`, left: `${adj.left}%`, top: `${adj.top}%` } : (() => {
                 const pos = getHairPosition(localConfig.hairId, 0.91, -0.4);
                 const top = parseFloat(pos.top);
-                return { ...pos, top: `${(top - 0.80).toFixed(3)}%` };
+                return { ...pos, top: `${(top + 1.05).toFixed(3)}%` };
               })()}
             />
           </div>
