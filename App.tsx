@@ -5,6 +5,7 @@ import { Html, Environment, PerspectiveCamera, useGLTF } from '@react-three/drei
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './firebase';
 import * as fbService from './firebaseService';
+import { on } from 'events';
 
 /**
  * MainWRLD- Full Integrated Creator & Reader Platform
@@ -2938,6 +2939,7 @@ const handleSpinWheel = () => {
           readingActivity={readingActivity}
           currentUsername={user.username}
           onAuthorSelect={(u: User) => { setSelectedProfileUser(u); setView('profile'); }}
+          onOwnSelect={(u: User) => { setSelectedProfileUser(u); setView('self-profile'); }}
           userFavoriteGenres={(() => {
             const genreCounts: Record<string, number> = {};
             books.filter(b => b.isFavorite || b.isOwned).forEach(b => {
@@ -3495,7 +3497,7 @@ const handleSpinWheel = () => {
 
 // --- Subviews Components ---
 
-const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect, avatarConfigs = {}, blockedUsers = new Set(), readingActivity = {}, currentUsername = '', userFavoriteGenres = [] }: any) => {
+const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [], onUserSelect, avatarConfigs = {}, blockedUsers = new Set(), readingActivity = {}, currentUsername = '', userFavoriteGenres = [] }: any) => {
   const [showFilter, setShowFilter] = useState(false);
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -3729,13 +3731,21 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
             <h3 className="text-sm font-bold uppercase tracking-widest text-gray-900">Top Authors</h3>
           </div>
           <div className="flex overflow-x-auto no-scrollbar gap-6 px-6 pb-2">
-            {topAuthors.map((author, i) => (
-              <div 
-                key={author.user.username} 
-                onClick={() => onAuthorSelect(author.user)}
-                className="flex-shrink-0 flex flex-col items-center gap-3 group cursor-pointer transition-all active:scale-95 w-24"
-              >
-                <div className="relative">
+            {topAuthors.map((author, i) => {
+              let handleClick;
+              if (author.user.username === currentUsername) {
+                handleClick = () => onOwnSelect(author.user);
+              } else {
+                handleClick = () => onAuthorSelect(author.user);
+              }
+              
+              return (
+                <div 
+                  key={author.user.username} 
+                  onClick={handleClick}
+                  className="flex-shrink-0 flex flex-col items-center gap-3 group cursor-pointer transition-all active:scale-95 w-24"
+                >
+                  <div className="relative">
                   <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-accent/20 to-accent/5 p-1 ring-2 ring-transparent group-hover:ring-accent transition-all">
                     <div className="w-full h-full rounded-full bg-white flex items-center justify-center text-accent text-xl font-black border-2 border-white shadow-sm overflow-hidden">
                       {avatarConfigs[author.user.username] ? (
@@ -3762,7 +3772,8 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, users = [], onUserSelect
                   </p>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
