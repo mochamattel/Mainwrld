@@ -1502,7 +1502,9 @@ const App: React.FC = () => {
     setBooks(prev => prev.map(b => {
       if (b.id === bookId) {
         if (chapterIndex < b.chaptersCount) {
-          return { ...b, chaptersCount: Math.max(0, b.chaptersCount - 1) };
+          const newChaptersCount = Math.max(0, b.chaptersCount - 1);
+          fbService.updateBook(bookId, { chaptersCount: newChaptersCount }).catch(console.error);
+          return { ...b, chaptersCount: newChaptersCount };
         }
       }
       return b;
@@ -1515,11 +1517,17 @@ const App: React.FC = () => {
       if (b.id === bookId && b.chapters) {
         const updatedChapters = b.chapters.filter((_, i) => i !== chapterIndex);
         const newChaptersCount = chapterIndex < b.chaptersCount ? Math.max(0, b.chaptersCount - 1) : b.chaptersCount;
+        const newContent = updatedChapters.map(c => c.content).join('\n\n');
+        fbService.updateBook(bookId, {
+          chapters: updatedChapters,
+          chaptersCount: newChaptersCount,
+          content: newContent
+        }).catch(console.error);
         return { 
           ...b, 
           chapters: updatedChapters, 
           chaptersCount: newChaptersCount,
-          content: updatedChapters.map(c => c.content).join('\n\n')
+          content: newContent
         };
       }
       return b;
@@ -2342,7 +2350,7 @@ const handleSpinWheel = () => {
     await fbService.updateBook(bookId, { monetizationAttempts: (book?.monetizationAttempts || 0) + 1 });
   };
 
-  const handleSaveDraft = (bookId: string | null, title: string, content: string, chapterIndex: number | null): string | null => {
+  const handleSaveDraft = async (bookId: string | null, title: string, content: string, chapterIndex: number | null): Promise<string | null> => {
     if (!title.trim() && !bookId) return null;
     let newBookId = bookId;
     if (bookId) {
@@ -2355,49 +2363,53 @@ const handleSpinWheel = () => {
         } else if (content.trim()) {
           updatedChapters.push({ title: `Chapter ${updatedChapters.length + 1}`, content });
         }
-        fbService.updateBook(bookId, {
+        await fbService.updateBook(bookId, {
           title: title.trim() || existingBook.title,
           chapters: updatedChapters,
           content: updatedChapters.map((c: any) => c.content).join('\n\n')
-        }).catch(console.error);
+        });
       }
+      setLastSelectedBookId(bookId);
+      setLastSelectedChapterIndex(chapterIndex !== null ? chapterIndex.toString() : 'new');
       return bookId;
-    } else {
-      const existingDraft = books.find((b: Book) => b.isDraft && b.title === title.trim() && b.author.username === user?.username);
-      if (existingDraft) {
-        newBookId = existingDraft.id;
-        const updatedChapters = content.trim() ? [{ title: 'Chapter 1', content }] : [];
-        fbService.updateBook(existingDraft.id, { content, chapters: updatedChapters }).catch(console.error);
-      } else {
-        // Create new draft in Firestore
-        const bookData = {
-          title: title.trim(),
-          authorUid: firebaseUid || '',
-          authorUsername: user?.username || '',
-          authorDisplayName: user?.displayName || '',
-          coverColor: '#' + Math.floor(Math.random()*16777215).toString(16),
-          likes: [0],
-          commentsCount: 0,
-          publishedDate: new Date().toISOString().split('T')[0],
-          isCompleted: false,
-          isDraft: true,
-          isExplicit: false,
-          chaptersCount: content.trim() ? 1 : 0,
-          tagline: '',
-          genres: [],
-          hashtags: [],
-          content,
-          chapters: content.trim() ? [{ title: 'Chapter 1', content }] : []
-        };
-        // Create async and return a temp id — the real-time listener will update with the Firestore id
-        fbService.createBook(bookData).then((created: any) => {
-          newBookId = created.id;
-        }).catch(console.error);
-        // Return null for now since we don't have the id yet synchronously
-        return null;
-      }
     }
-    // Sync current editing state
+
+    const existingDraft = books.find((b: Book) => b.isDraft && b.title === title.trim() && b.author.username === user?.username);
+    if (existingDraft) {
+      newBookId = existingDraft.id;
+      const updatedChapters = content.trim() ? [{ title: 'Chapter 1', content }] : [];
+      await fbService.updateBook(existingDraft.id, {
+        title: title.trim() || existingDraft.title,
+        content,
+        chapters: updatedChapters,
+        chaptersCount: updatedChapters.length,
+        isDraft: true,
+      });
+    } else {
+      // Create new draft in Firestore and return the real document id
+      const bookData = {
+        title: title.trim(),
+        authorUid: firebaseUid || '',
+        authorUsername: user?.username || '',
+        authorDisplayName: user?.displayName || '',
+        coverColor: '#' + Math.floor(Math.random()*16777215).toString(16),
+        likes: [0],
+        commentsCount: 0,
+        publishedDate: new Date().toISOString().split('T')[0],
+        isCompleted: false,
+        isDraft: true,
+        isExplicit: false,
+        chaptersCount: content.trim() ? 1 : 0,
+        tagline: '',
+        genres: [],
+        hashtags: [],
+        content,
+        chapters: content.trim() ? [{ title: 'Chapter 1', content }] : []
+      };
+      const created = await fbService.createBook(bookData);
+      newBookId = (created as any).id;
+    }
+
     setLastSelectedBookId(newBookId || 'new');
     setLastSelectedChapterIndex(chapterIndex !== null ? chapterIndex.toString() : 'new');
     return newBookId;
@@ -3077,7 +3089,7 @@ const handleSpinWheel = () => {
               }
             } else {
               // Existing book — save draft
-              handleSaveDraft(id, title, content, chapterIndex);
+              await handleSaveDraft(id, title, content, chapterIndex);
             }
 
             if (effectiveId) {
@@ -3101,7 +3113,7 @@ const handleSpinWheel = () => {
           onDeleteChapter={handleDeleteChapter}
           onMonetize={() => setView('monetization-request')}
           onBack={() => setView('home')}
-          setToast={showToast}
+          showToast={showToast}
           onNotify={(title: string, message: string) => {
             const newNotif = {
               id: Math.random().toString(36).substr(2, 9),
@@ -5892,11 +5904,11 @@ const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsern
   );
 };
 
-const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublish, onSaveDraft, onMonetize, showToast, onBack, onNotify }: any) => {
+const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = 'new', onSelectionChange, onUnpublishChapter, onDeleteChapter, onPublish, onSaveDraft, onMonetize, showToast, onBack, onNotify }: any) => {
   const [newTitle, setNewTitle] = useState('');
-  const [selectedBookId, setSelectedBookId] = useState<string>('new');
-  const [selectedChapterIndex, setSelectedChapterIndex] = useState<string>('new');
-  const [draftSaved, setDraftSaved] = useState(false);
+  const [selectedBookId, setSelectedBookId] = useState<string>(initialBookId);
+  const [selectedChapterIndex, setSelectedChapterIndex] = useState<string>(initialChapterIndex);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [wordCount, setWordCount] = useState(0); // Reactive word count state
    const [deleteConfirmIdx, setDeleteConfirmIdx] = useState<number | null>(null);
   const [unpublishConfirmIdx, setUnpublishConfirmIdx] = useState<number | null>(null);
@@ -5906,6 +5918,10 @@ const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublis
   const lastValidWordCountRef = useRef(0);
   const hasShownNearLimitRef = useRef(false);
   const hasShownMaxLimitRef = useRef(false);
+  const dirtyDraftRef = useRef(false);
+  const saveTimerRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
+  const latestStateRef = useRef({ selectedBookId: initialBookId, selectedChapterIndex: initialChapterIndex, newTitle: '' });
   
   const myWorks = useMemo(() => books.filter((b: Book) => b.author.username === user.username), [books, user]);
   const selectedBook = useMemo(() => myWorks.find((w: Book) => w.id === selectedBookId), [myWorks, selectedBookId]);
@@ -6058,19 +6074,84 @@ const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublis
   }, [calculateWordCount, getWords, onNotify, updateWordCount, ensureCaretVisible]);
 
   const handleEditorInput = useCallback(() => {
+    dirtyDraftRef.current = true;
     updateWordCount();
     ensureCaretVisible();
   }, [updateWordCount, ensureCaretVisible]);
+
+  const setSavedIndicator = useCallback((state: 'saved' | 'idle' | 'error') => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    setSaveState(state);
+    if (state === 'saved') {
+      saveTimerRef.current = window.setTimeout(() => {
+        setSaveState('idle');
+        saveTimerRef.current = null;
+      }, 2000);
+    }
+  }, []);
+
+  const performDraftSave = useCallback(async (mode: 'manual' | 'auto') => {
+    if (saveInFlightRef.current) return null;
+
+    const currentBookId = latestStateRef.current.selectedBookId === 'new' ? null : latestStateRef.current.selectedBookId;
+    const currentTitle = latestStateRef.current.newTitle;
+    const isSavingNewChapter = latestStateRef.current.selectedChapterIndex === 'new';
+    const chapterCountBeforeSave = selectedBook?.chapters?.length || 0;
+    const currentChapterIndex = isSavingNewChapter
+      ? null
+      : parseInt(latestStateRef.current.selectedChapterIndex, 10);
+    const currentContent = editorRef.current?.innerHTML || '';
+
+    if (!currentBookId && !currentTitle.trim()) return null;
+    if (mode === 'auto' && !dirtyDraftRef.current) return currentBookId;
+
+    saveInFlightRef.current = true;
+    setSaveState('saving');
+
+    try {
+      const savedId = await onSaveDraft(currentBookId, currentTitle, currentContent, currentChapterIndex);
+      if (savedId && latestStateRef.current.selectedBookId === 'new') {
+        setSelectedBookId(savedId);
+      }
+      if (isSavingNewChapter && currentContent.trim()) {
+        // After first save of a new chapter, lock selection to that chapter so autosave updates it instead of appending new ones.
+        const createdChapterIndex = currentBookId ? chapterCountBeforeSave : 0;
+        setSelectedChapterIndex(createdChapterIndex.toString());
+      }
+      dirtyDraftRef.current = false;
+      setSavedIndicator('saved');
+      return savedId;
+    } catch (error) {
+      console.error('Failed to save draft:', error);
+      setSavedIndicator('error');
+      if (mode === 'manual') {
+        showToast('Failed to save draft. Please try again.', 'warning');
+      }
+      return null;
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  }, [onSaveDraft, setSavedIndicator, showToast]);
 
   useEffect(() => {
     document.execCommand('defaultParagraphSeparator', false, 'p');
   }, []);
 
   useEffect(() => {
+    latestStateRef.current = { selectedBookId, selectedChapterIndex, newTitle };
+  }, [selectedBookId, selectedChapterIndex, newTitle]);
+
+  useEffect(() => {
+    onSelectionChange?.(selectedBookId, selectedChapterIndex);
+  }, [onSelectionChange, selectedBookId, selectedChapterIndex]);
+
+  useEffect(() => {
     if (selectedBookId !== 'new' && selectedBook) {
       setNewTitle(selectedBook.title);
-      setSelectedChapterIndex('new');
-    } else {
+    } else if (selectedBookId === 'new') {
       setNewTitle('');
       setSelectedChapterIndex('new');
     }
@@ -6079,6 +6160,8 @@ const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublis
   useEffect(() => {
     const targetKey = `${selectedBookId}:${selectedChapterIndex}`;
     if (loadedEditorTargetRef.current === targetKey) return;
+
+    if (selectedBookId !== 'new' && !selectedBook) return;
 
     let content = '';
     if (selectedBook && selectedChapterIndex !== 'new') {
@@ -6095,8 +6178,26 @@ const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublis
       const nextCount = calculateWordCount(editorRef.current.innerText || '');
       lastValidWordCountRef.current = nextCount;
       setWordCount(nextCount);
+      dirtyDraftRef.current = false;
+      setSaveState('idle');
     }
   }, [selectedChapterIndex, selectedBookId, selectedBook, calculateWordCount]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void performDraftSave('auto');
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [performDraftSave]);
 
   const execAction = (cmd: string, val: string | null = null) => {
     if (!editorRef.current) return;
@@ -6154,7 +6255,10 @@ const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublis
         <div className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest ml-2">Your Works</label>
-            <select className="w-full bg-gray-50 border-none rounded-2xl px-6 py-4 text-sm font-medium outline-none appearance-none cursor-pointer shadow-sm" value={selectedBookId} onChange={(e) => setSelectedBookId(e.target.value)}>
+            <select className="w-full bg-gray-50 border-none rounded-2xl px-6 py-4 text-sm font-medium outline-none appearance-none cursor-pointer shadow-sm" value={selectedBookId} onChange={(e) => {
+              setSelectedBookId(e.target.value);
+              setSelectedChapterIndex('new');
+            }}>
               <option value="new">Start a New Work</option>
               {myWorks.map((w: Book) => <option key={w.id} value={w.id}>{w.title}</option>)}
             </select>
@@ -6163,7 +6267,10 @@ const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublis
           {selectedBookId === 'new' && (
             <div className="space-y-1.5 animate-in slide-in-from-top duration-300">
               <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest ml-2">Book Title</label>
-              <input placeholder="Enter new book title..." value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-gray-50 border-none rounded-2xl px-6 py-4 text-sm font-medium outline-none shadow-sm focus:ring-2 focus:ring-accent/10" />
+              <input placeholder="Enter new book title..." value={newTitle} onChange={(e) => {
+                dirtyDraftRef.current = true;
+                setNewTitle(e.target.value);
+              }} className="w-full bg-gray-50 border-none rounded-2xl px-6 py-4 text-sm font-medium outline-none shadow-sm focus:ring-2 focus:ring-accent/10" />
             </div>
           )}
 
@@ -6237,13 +6344,9 @@ const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublis
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Button variant="outline" disabled={selectedBookId === 'new' && !newTitle.trim()} onClick={() => {
-              const currentContent = editorRef.current?.innerHTML || "";
-              const savedId = onSaveDraft(selectedBookId === 'new' ? null : selectedBookId, newTitle, currentContent, selectedChapterIndex === 'new' ? null : parseInt(selectedChapterIndex));
-              if (savedId && selectedBookId === 'new') setSelectedBookId(savedId);
-              setDraftSaved(true);
-              setTimeout(() => setDraftSaved(false), 2000);
-            }}>{draftSaved ? '✓ Saved!' : 'Save Draft'}</Button>
+          <Button variant="outline" disabled={(selectedBookId === 'new' && !newTitle.trim()) || saveState === 'saving'} onClick={() => {
+              void performDraftSave('manual');
+            }}>{saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? '✓ Saved!' : saveState === 'error' ? 'Retry Save' : 'Save Draft'}</Button>
           <Button disabled={!canPublish} onClick={() => {
               const currentContent = editorRef.current?.innerHTML || "";
               onPublish(selectedBookId === 'new' ? null : selectedBookId, newTitle, currentContent, selectedChapterIndex === 'new' ? null : parseInt(selectedChapterIndex));
