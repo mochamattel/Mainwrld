@@ -1497,6 +1497,36 @@ const App: React.FC = () => {
     fbService.addNotificationDoc(newNotif).catch(console.error);
   }, [user.username]);
 
+  
+  const handleUnpublishChapter = (bookId: string, chapterIndex: number) => {
+    setBooks(prev => prev.map(b => {
+      if (b.id === bookId) {
+        if (chapterIndex < b.chaptersCount) {
+          return { ...b, chaptersCount: Math.max(0, b.chaptersCount - 1) };
+        }
+      }
+      return b;
+    }));
+    showToast('Chapter unpublished and moved to drafts.', 'info');
+  };
+
+  const handleDeleteChapter = (bookId: string, chapterIndex: number) => {
+    setBooks(prev => prev.map(b => {
+      if (b.id === bookId && b.chapters) {
+        const updatedChapters = b.chapters.filter((_, i) => i !== chapterIndex);
+        const newChaptersCount = chapterIndex < b.chaptersCount ? Math.max(0, b.chaptersCount - 1) : b.chaptersCount;
+        return { 
+          ...b, 
+          chapters: updatedChapters, 
+          chaptersCount: newChaptersCount,
+          content: updatedChapters.map(c => c.content).join('\n\n')
+        };
+      }
+      return b;
+    }));
+    showToast('Chapter permanently deleted.', 'error');
+  };
+
   const handleLogout = async () => {
     // Mark offline in Firestore before logging out
     if (firebaseUid) {
@@ -2438,8 +2468,20 @@ const handleSpinWheel = () => {
         console.error(error);
         showToast('Failed to like comment. Please try again.', 'error');
       });
-      const recipientUsername = (comment as any).authorUsername || comment.author;
-      addNotification('Comment Liked', `${user.displayName} liked your comment: "${comment.text.substring(0, 20)}..."`, 'favorite_border', recipientUsername);
+      const recipientUsername =
+        (comment as any).authorUsername ||
+        registeredUsers.find((u: any) => u.displayName === comment.author)?.username ||
+        comment.author;
+      addNotification(
+        'Comment Liked',
+        `${user.displayName} liked your comment: "${comment.text.substring(0, 20)}..."`,
+        'favorite_border',
+        recipientUsername,
+        user.username,
+        comment.bookId,
+        comment.chapterIndex,
+        comment.id
+      );
 
       // Earned points: award comment author 1 pt when comment hits like threshold
       const rewardKey = `comment:${commentId}:${Math.floor(newLikes / COMMENT_LIKES_THRESHOLD)}`;
@@ -3055,8 +3097,11 @@ const handleSpinWheel = () => {
             }
           }}
           onSaveDraft={handleSaveDraft}
+          onUnpublishChapter={handleUnpublishChapter}
+          onDeleteChapter={handleDeleteChapter}
           onMonetize={() => setView('monetization-request')}
           onBack={() => setView('home')}
+          setToast={showToast}
           onNotify={(title: string, message: string) => {
             const newNotif = {
               id: Math.random().toString(36).substr(2, 9),
@@ -5847,12 +5892,14 @@ const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsern
   );
 };
 
-const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, onNotify }: any) => {
+const WriteView = ({ books, user,  onUnpublishChapter, onDeleteChapter, onPublish, onSaveDraft, onMonetize, showToast, onBack, onNotify }: any) => {
   const [newTitle, setNewTitle] = useState('');
   const [selectedBookId, setSelectedBookId] = useState<string>('new');
   const [selectedChapterIndex, setSelectedChapterIndex] = useState<string>('new');
   const [draftSaved, setDraftSaved] = useState(false);
   const [wordCount, setWordCount] = useState(0); // Reactive word count state
+   const [deleteConfirmIdx, setDeleteConfirmIdx] = useState<number | null>(null);
+  const [unpublishConfirmIdx, setUnpublishConfirmIdx] = useState<number | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const loadedEditorTargetRef = useRef('');
   const lastValidHtmlRef = useRef('');
@@ -6059,6 +6106,34 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
   };
 
   const canPublish = wordCount >= MIN_WORD_COUNT && (selectedBookId !== 'new' || newTitle.trim().length > 0);
+  const isPublished = selectedChapterIndex !== 'new' && selectedBook && parseInt(selectedChapterIndex) < selectedBook.chaptersCount;
+
+  const handleDeleteClick = () => {
+    if (selectedChapterIndex === 'new') return;
+    const idx = parseInt(selectedChapterIndex);
+    if (deleteConfirmIdx === idx) {
+      onDeleteChapter(selectedBookId, idx);
+      setDeleteConfirmIdx(null);
+      setSelectedChapterIndex('new');
+    } else {
+      setDeleteConfirmIdx(idx);
+      showToast('Are you sure? Click delete again to permanently erase.', 'warning');
+      setTimeout(() => setDeleteConfirmIdx(null), 5000);
+    }
+  };
+
+  const handleUnpublishClick = () => {
+    if (selectedChapterIndex === 'new') return;
+    const idx = parseInt(selectedChapterIndex);
+    if (unpublishConfirmIdx === idx) {
+      onUnpublishChapter(selectedBookId, idx);
+      setUnpublishConfirmIdx(null);
+    } else {
+      setUnpublishConfirmIdx(idx);
+      showToast('Are you sure? Click unpublish again to move to drafts.', 'info');
+      setTimeout(() => setUnpublishConfirmIdx(null), 5000);
+    }
+  };
 
 
   return (
@@ -6127,6 +6202,27 @@ const WriteView = ({ books, user, onPublish, onSaveDraft, onMonetize, onBack, on
             <div ref={editorRef} contentEditable="true" inputMode="text" role="textbox" aria-multiline="true" spellCheck="true" className="w-full min-h-[400px] bg-transparent border-none outline-none text-base leading-relaxed placeholder:text-gray-200 resize-none no-scrollbar focus:ring-0 rich-editor" style={{ WebkitUserSelect: 'text', userSelect: 'text', WebkitTouchCallout: 'default', touchAction: 'manipulation' }} onBeforeInput={handleBeforeInput} onPaste={handlePaste} onInput={handleEditorInput} onTouchEnd={(e) => { e.currentTarget.focus(); ensureCaretVisible(); }} />
           )}
         </div>
+        
+        {selectedChapterIndex !== 'new' && (
+          <div className="sticky bottom-0 z-20 flex gap-4 pt-4 pb-2 animate-in slide-in-from-bottom duration-300 bg-white/95 backdrop-blur-sm border-t border-gray-100">
+            {isPublished && (
+              <button 
+                onClick={handleUnpublishClick}
+                className={`flex-1 h-12 rounded-2xl font-bold text-[9px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 border ${unpublishConfirmIdx !== null ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-gray-50 border-gray-100 text-gray-400 hover:text-amber-500'}`}
+              >
+                <span className="material-icons-round text-sm">{unpublishConfirmIdx !== null ? 'priority_high' : 'unpublished'}</span>
+                {unpublishConfirmIdx !== null ? 'Confirm Unpublish?' : 'Unpublish Chapter'}
+              </button>
+            )}
+            <button 
+              onClick={handleDeleteClick}
+              className={`flex-1 h-12 rounded-2xl font-bold text-[9px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 border ${deleteConfirmIdx !== null ? 'bg-red-50 border-red-200 text-red-600 shadow-lg shadow-red-500/10' : 'bg-gray-50 border-gray-100 text-gray-400 hover:text-red-500'}`}
+            >
+              <span className="material-icons-round text-sm">{deleteConfirmIdx !== null ? 'report' : 'delete_forever'}</span>
+              {deleteConfirmIdx !== null ? 'Confirm Delete?' : 'Delete Chapter'}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="p-6 bg-white border-t border-gray-50">
