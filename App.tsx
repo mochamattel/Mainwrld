@@ -772,6 +772,7 @@ const App: React.FC = () => {
   }, [view]);
 
   const [likedBooks, setLikedBooks] = useState<Set<string>>(new Set());
+  const [favoriteBookIds, setFavoriteBookIds] = useState<Set<string>>(new Set());
   const likedBooksInteracted = useRef(false);
   const [signUpForm, setSignUpForm] = useState({ email: '', birthDate: '', displayName: '', username: '', password: '' });
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
@@ -919,6 +920,10 @@ const App: React.FC = () => {
     return new Set([...owned, ...purchased]);
   }, [userBookData, user.username]);
 
+  const isBookFavorited = useCallback((bookId: string): boolean => {
+    return favoriteBookIds.has(bookId);
+  }, [favoriteBookIds]);
+
   // Helper to get current user's progress for a book
   const getUserBookProgress = useCallback((bookId: string): BookProgress => {
     const progress = userBookData[user.username]?.bookProgress?.[bookId];
@@ -1025,6 +1030,8 @@ const App: React.FC = () => {
         coupons,
         // Cart
         cart: cartData,
+        // Favorites
+        favoriteBookIds: Array.from(favoriteBookIds),
       };
 
       fbService.updateUserProfile(firebaseUid, batchUpdate).catch(console.error);
@@ -1038,7 +1045,7 @@ const App: React.FC = () => {
     user.admirersCount, user.mutualsCount, user.dailyEarnedPoints, user.lastPointsReset,
     user.membershipStartDate, user.lastMembershipRewardDate, user.dailyChaptersPublished, user.lastChapterPublishReset,
     lastClaimedPoints, userBookData, allAvatarConfigs, allUnlockedItems, blockedUsers,
-    readingActivity, coupons, cart,
+    readingActivity, coupons, cart, favoriteBookIds,
     firebaseUid, userDataLoaded, view,
   ]);
 
@@ -1064,6 +1071,7 @@ const App: React.FC = () => {
         ...(ud ? { bookProgress: ud.bookProgress || {} } : {}),
         ...(cfg ? { avatarConfig: cfg } : {}), ...(items ? { unlockedItems: items } : {}),
         blockedUsers: [...blockedUsers], ...(activity ? { readingActivity: activity } : {}), coupons, cart: cartData,
+        favoriteBookIds: Array.from(favoriteBookIds),
       };
       fbService.updateUserProfile(firebaseUid, batchUpdate).catch(() => {});
     };
@@ -1155,12 +1163,25 @@ const App: React.FC = () => {
         },
         // Ensure likes is always an array
         likes: Array.isArray(fb.likes) ? fb.likes : [fb.likes || 0],
+        isFavorite: favoriteBookIds.has(fb.id),
         price: fb.price ?? 0,
       }));
       setBooks(converted);
     });
     return () => unsubscribe();
-  }, []);
+  }, [favoriteBookIds]);
+
+  useEffect(() => {
+    setBooks(prev => prev.map(book => {
+      const nextIsFavorite = favoriteBookIds.has(book.id);
+      return book.isFavorite === nextIsFavorite ? book : { ...book, isFavorite: nextIsFavorite };
+    }));
+    setSelectedBook(prev => {
+      if (!prev) return prev;
+      const nextIsFavorite = favoriteBookIds.has(prev.id);
+      return prev.isFavorite === nextIsFavorite ? prev : { ...prev, isFavorite: nextIsFavorite };
+    });
+  }, [favoriteBookIds]);
 
   // Subscribe to all registered users in real-time for online status and reading activity
   useEffect(() => {
@@ -1269,6 +1290,8 @@ const App: React.FC = () => {
       // Load likedBooks
       if (profile.likedBooks) setLikedBooks(new Set(profile.likedBooks));
       else setLikedBooks(new Set());
+      if (profile.favoriteBookIds) setFavoriteBookIds(new Set(profile.favoriteBookIds));
+      else setFavoriteBookIds(new Set());
       likedBooksInteracted.current = false;
       // Load blocked users
       if (profile.blockedUsers) setBlockedUsers(new Set(profile.blockedUsers));
@@ -1465,12 +1488,15 @@ const App: React.FC = () => {
               // Mark user online in Firestore on auth restore
               fbService.updateUserProfile(firebaseUser.uid, { isOnline: true, lastOnline: new Date().toISOString() }).catch(console.error);
             } else {
+              setFavoriteBookIds(new Set());
               setView('login');
             }
           } catch {
+            setFavoriteBookIds(new Set());
             setView('login');
           }
         } else {
+          setFavoriteBookIds(new Set());
           setView('login');
         }
         setAuthLoading(false);
@@ -1545,6 +1571,7 @@ const App: React.FC = () => {
     } catch {}
     setUser(BLANK_USER);
     setFirebaseUid(null);
+    setFavoriteBookIds(new Set());
     setUserDataLoaded(false);
     setView('login');
   };
@@ -1641,6 +1668,7 @@ const App: React.FC = () => {
         admiringCount: (result as any).admiringCount || 0,
       });
       setFirebaseUid((result as any).uid);
+      setFavoriteBookIds(new Set());
       setAuthError(null);
       setView('home');
       // Mark user online in Firestore
@@ -1708,6 +1736,7 @@ const App: React.FC = () => {
 
       setUser(newUser);
       setFirebaseUid(result.uid);
+  setFavoriteBookIds(new Set());
       setAuthError(null);
       setView('home');
 
@@ -2000,12 +2029,28 @@ const App: React.FC = () => {
   }, [userBookData, user.username]);
 
   const handleToggleFavorite = (bookId: string) => {
-    setBooks(prev => {
-      const newBooks = prev.map(b => b.id === bookId ? { ...b, isFavorite: !b.isFavorite } : b);
-      const updatedBook = newBooks.find(b => b.id === bookId);
-      if (updatedBook && selectedBook && selectedBook.id === bookId) setSelectedBook(updatedBook);
-      return newBooks;
+    const nextFavoriteBookIds = new Set(favoriteBookIds);
+    const isFavorited = nextFavoriteBookIds.has(bookId);
+
+    if (isFavorited) nextFavoriteBookIds.delete(bookId);
+    else nextFavoriteBookIds.add(bookId);
+
+    setFavoriteBookIds(nextFavoriteBookIds);
+
+    setBooks(prev => prev.map(book =>
+      book.id === bookId ? { ...book, isFavorite: !isFavorited } : book
+    ));
+
+    setSelectedBook(prev => {
+      if (!prev || prev.id !== bookId) return prev;
+      return { ...prev, isFavorite: !isFavorited };
     });
+
+    if (firebaseUid) {
+      fbService.updateUserProfile(firebaseUid, {
+        favoriteBookIds: Array.from(nextFavoriteBookIds),
+      }).catch(console.error);
+    }
   };
 
   const handleAddToCart = (book: Book) => {
@@ -2996,7 +3041,7 @@ const handleSpinWheel = () => {
           onOwnSelect={(u: User) => { setSelectedProfileUser(u); setView('self-profile'); }}
           userFavoriteGenres={(() => {
             const genreCounts: Record<string, number> = {};
-            books.filter(b => b.isFavorite || b.isOwned).forEach(b => {
+            books.filter(b => isBookFavorited(b.id) || b.isOwned).forEach(b => {
               (b.genres || []).forEach((g: string) => { genreCounts[g] = (genreCounts[g] || 0) + 1; });
             });
             return Object.entries(genreCounts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(e => e[0]);
@@ -3275,6 +3320,7 @@ const handleSpinWheel = () => {
             currentUsername={user.username}
             readingActivity={readingActivity}
             avatarConfig={allAvatarConfigs[selectedProfileUser.username] || null}
+            favoriteBookIds={new Set((registeredUsers.find((u: any) => u.username === selectedProfileUser.username)?.favoriteBookIds || []))}
           />
         );
 
@@ -3913,7 +3959,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [],
   );
 };
 
-const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock, onReport, onMessage, relationships = [], currentUsername = '', readingActivity = {}, avatarConfig = null }: any) => {
+const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock, onReport, onMessage, relationships = [], currentUsername = '', readingActivity = {}, avatarConfig = null, favoriteBookIds = new Set() }: any) => {
   const [showMenu, setShowMenu] = useState(false);
   const [showBlockConfirm, setShowBlockConfirm] = useState(false);
   const isAdmiring = relationships.some((r: Relationship) => r.admirer === currentUsername && r.target === user.username);
@@ -4111,7 +4157,7 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
 
           <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-2 mt-10">Favorites</h3>
           <div className="flex gap-6 overflow-x-auto no-scrollbar pb-2">
-            {books.filter((b: Book) => b.isFavorite).map((b: Book) => (
+            {books.filter((b: Book) => favoriteBookIds.has(b.id)).map((b: Book) => (
               <div key={b.id} onClick={() => onBookSelect(b)} className="flex-shrink-0 w-32 cursor-pointer space-y-2">
                 <div className="aspect-[2/3] rounded-lg shadow-md border-4 border-white overflow-hidden relative" style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
                 <div className="px-1">
@@ -4120,8 +4166,9 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
                 </div>
               </div>
             ))}
-            {books.filter((b: Book) => b.isFavorite).length === 0 && <p className="text-[10px] font-bold text-gray-300 uppercase py-4">No favorites yet</p>}
+            {books.filter((b: Book) => favoriteBookIds.has(b.id)).length === 0 && <p className="text-[10px] font-bold text-gray-300 uppercase py-4">No favorites yet</p>}
           </div>
+
         </section>
       </div>
     </div>
