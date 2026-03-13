@@ -3653,11 +3653,75 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [],
   }, [users, cleanQuery, isHashtagSearch, blockedUsers]);
 
    const spotlightBook = useMemo(() => {
-    const currentWeekEpoch = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
     const publicBooks = books.filter((b: Book) => !b.isDraft);
-    const sortedByFaves = [...publicBooks].sort((a, b) => (b.favoritesLastWeek || 0) - (a.favoritesLastWeek || 0));
-    const uniqueIndex = currentWeekEpoch % sortedByFaves.length;
-    return sortedByFaves[uniqueIndex] || sortedByFaves[0];
+    if (publicBooks.length === 0) return null;
+
+    const sortedByFaves = [...publicBooks].sort((a, b) => {
+      const diff = (b.favoritesLastWeek || 0) - (a.favoritesLastWeek || 0);
+      if (diff !== 0) return diff;
+      return new Date(b.publishedDate).getTime() - new Date(a.publishedDate).getTime();
+    });
+
+    if (typeof window === 'undefined') return sortedByFaves[0];
+
+    const currentWeekEpoch = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
+    const storageKey = 'mainwrld_spotlight_cycle_v1';
+    const availableBookIds = new Set(publicBooks.map((b: Book) => b.id));
+
+    type SpotlightCycleState = { lastWeek: number; chosenIds: string[] };
+    let cycleState: SpotlightCycleState = { lastWeek: -1, chosenIds: [] };
+
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as SpotlightCycleState;
+        if (typeof parsed?.lastWeek === 'number' && Array.isArray(parsed?.chosenIds)) {
+          cycleState = parsed;
+        }
+      }
+    } catch {
+      // Ignore bad cache and continue with defaults.
+    }
+
+    cycleState.chosenIds = cycleState.chosenIds.filter((id: string) => availableBookIds.has(id));
+
+    const persistState = (nextState: SpotlightCycleState) => {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(nextState));
+      } catch {
+        // Ignore storage errors; fallback is still deterministic for this render.
+      }
+    };
+
+    if (cycleState.lastWeek !== currentWeekEpoch) {
+      let nextChosenIds = [...cycleState.chosenIds];
+      let unchosenBooks = sortedByFaves.filter((b: Book) => !nextChosenIds.includes(b.id));
+
+      if (unchosenBooks.length === 0) {
+        nextChosenIds = [];
+        unchosenBooks = [...sortedByFaves];
+      }
+
+      const nextSpotlight = unchosenBooks[0] || sortedByFaves[0];
+      const nextState: SpotlightCycleState = {
+        lastWeek: currentWeekEpoch,
+        chosenIds: [...nextChosenIds, nextSpotlight.id],
+      };
+      persistState(nextState);
+      return nextSpotlight;
+    }
+
+    const currentSpotlightId = cycleState.chosenIds[cycleState.chosenIds.length - 1];
+    const currentSpotlight = publicBooks.find((b: Book) => b.id === currentSpotlightId);
+    if (currentSpotlight) return currentSpotlight;
+
+    const fallbackSpotlight = sortedByFaves.find((b: Book) => !cycleState.chosenIds.includes(b.id)) || sortedByFaves[0];
+    const fallbackState: SpotlightCycleState = {
+      lastWeek: currentWeekEpoch,
+      chosenIds: [...cycleState.chosenIds, fallbackSpotlight.id],
+    };
+    persistState(fallbackState);
+    return fallbackSpotlight;
   }, [books]);
 
   const topAuthors = useMemo(() => {
