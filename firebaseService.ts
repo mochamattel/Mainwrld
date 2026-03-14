@@ -344,16 +344,34 @@ export const subscribeToNotifications = (callback: (notifs: any[]) => void): Uns
 // ==================== COMMENTS ====================
 
 export const addCommentDoc = async (comment: any) => {
-  await addDoc(collection(db, 'comments'), comment);
+  const commentRef = doc(collection(db, 'comments'));
+  const commentWithId = {
+    ...comment,
+    id: comment.id || commentRef.id,
+  };
+  await setDoc(commentRef, commentWithId);
+  return commentWithId.id;
 };
 
 export const updateComment = async (commentId: string, data: any) => {
+  const commentRef = doc(db, 'comments', commentId);
+  const commentDoc = await getDoc(commentRef);
+  if (commentDoc.exists()) {
+    await updateDoc(commentRef, data);
+    return;
+  }
   const q = query(collection(db, 'comments'), where('id', '==', commentId));
   const snapshot = await getDocs(q);
   if (!snapshot.empty) await updateDoc(snapshot.docs[0].ref, data);
 };
 
 export const removeCommentDoc = async (commentId: string) => {
+  const commentRef = doc(db, 'comments', commentId);
+  const commentDoc = await getDoc(commentRef);
+  if (commentDoc.exists()) {
+    await deleteDoc(commentRef);
+    return;
+  }
   const q = query(collection(db, 'comments'), where('id', '==', commentId));
   const snapshot = await getDocs(q);
   if (!snapshot.empty) await deleteDoc(snapshot.docs[0].ref);
@@ -367,7 +385,14 @@ export const removeCommentsByAuthor = async (authorUsername: string) => {
 
 export const subscribeToComments = (callback: (comments: any[]) => void): Unsubscribe => {
   return onSnapshot(collection(db, 'comments'), (snapshot: QuerySnapshot) => {
-    callback(snapshot.docs.map(d => ({ ...d.data() })));
+    callback(snapshot.docs.map(d => {
+      const data = d.data();
+      return {
+        docId: d.id,
+        ...data,
+        id: data.id || d.id,
+      };
+    }));
   });
 };
 

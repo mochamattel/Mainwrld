@@ -1246,7 +1246,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsub = fbService.subscribeToComments((comments: any[]) => {
       setAllComments(comments.map(c => ({
-        id: c.id || c.commentId, bookId: c.bookId, chapterIndex: c.chapterIndex,
+        id: c.id || c.commentId || c.docId, bookId: c.bookId, chapterIndex: c.chapterIndex,
         author: c.author, authorUsername: c.authorUsername, text: c.text,
         likes: c.likes || 0, likedBy: c.likedBy || [], timestamp: c.timestamp || 'Now'
       })));
@@ -2488,6 +2488,7 @@ const handleSpinWheel = () => {
   };
 
   try {
+    setAllComments(prev => [...prev, newComment as any]);
     const createdCommentId = await fbService.addCommentDoc(newComment);
 
     const chapterName = chapterIndex !== undefined && selectedBook.chapters?.[chapterIndex]
@@ -2506,25 +2507,40 @@ const handleSpinWheel = () => {
 
     showToast("Your comment has been successfully added.");
   } catch (error) {
+    setAllComments(prev => prev.filter(c => c.id !== newComment.id));
     console.error(error);
     showToast('Failed to post comment. Please try again.', 'error');
   }
 };
 
 
-  const handleLikeComment = (commentId: string) => {
+  const handleLikeComment = async (commentId: string) => {
       const comment = allComments.find(c => c.id === commentId);
       if (!comment) return;
       const likedBy = comment.likedBy || [];
       if (likedBy.includes(user.username)) return; // Already liked
       const newLikes = comment.likes + 1;
-      fbService.updateComment(commentId, {
-        likes: newLikes,
-        likedBy: [...likedBy, user.username]
-      }).catch((error) => {
+      const updatedLikedBy = [...likedBy, user.username];
+      setAllComments(prev => prev.map(c => (
+        c.id === commentId
+          ? { ...c, likes: newLikes, likedBy: updatedLikedBy }
+          : c
+      )));
+      try {
+        await fbService.updateComment(commentId, {
+          likes: newLikes,
+          likedBy: updatedLikedBy
+        });
+      } catch (error) {
+        setAllComments(prev => prev.map(c => (
+          c.id === commentId
+            ? { ...c, likes: comment.likes, likedBy }
+            : c
+        )));
         console.error(error);
         showToast('Failed to like comment. Please try again.', 'error');
-      });
+        return;
+      }
       const recipientUsername =
         (comment as any).authorUsername ||
         registeredUsers.find((u: any) => u.displayName === comment.author)?.username ||
