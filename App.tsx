@@ -249,7 +249,7 @@ const GENRE_LIST = ['Mystery', 'Sci-Fi', 'Romance', 'Horror', 'Dystopian', 'Fant
 const ADMIN_USERNAMES = ['admin', 'mochamattel'];
 
 // Bad words filter for usernames and display names
-const BAD_WORDS = ['fuck','dick','cock','bastard','slut','whore','cunt','nigger','nigga','fag','faggot','retard','rape','penis','vagina','anal','porn','hentai','cum','jizz','dildo','sex','xxx','tits','kys','kms','stfu'];
+const BAD_WORDS = ['fuck','dick','cock','bastard','slut','cunt','nigger','nigga', 'n1gger','nigg3r','fag','faggot','retard','rape','penis','vagina','anal','porn','hentai','cum','jizz','sex','xxx','tits','kys','kms','stfu'];
 const containsBadWord = (text: string): boolean => {
   const lower = text.toLowerCase().replace(/[^a-z]/g, '');
   return BAD_WORDS.some(word => lower.includes(word));
@@ -1136,6 +1136,7 @@ const App: React.FC = () => {
   // Publishing temp state
   const [currentPublishingContent, setCurrentPublishingContent] = useState('');
   const [currentPublishingTitle, setCurrentPublishingTitle] = useState('');
+  const [currentPublishingChapterTitle, setCurrentPublishingChapterTitle] = useState('');
   const [currentPublishingId, setCurrentPublishingId] = useState<string | null>(null);
   const [currentPublishingChapterIndex, setCurrentPublishingChapterIndex] = useState<number | null>(null);
   const [publishingInitialData, setPublishingInitialData] = useState<any>(null);
@@ -2215,8 +2216,8 @@ const handleSpinWheel = () => {
       showToast(`You've reached your daily publishing limit of ${MAX_DAILY_CHAPTERS} chapters. Please try again tomorrow!`);
       return;
     }
-    if (containsBadWord(data.title || '') || containsBadWord(data.tagline || '')) {
-      showToast('Your content contains inappropriate language. Please revise before publishing.', 'warning');
+    if (containsBadWord(currentPublishingTitle || '') || containsBadWord(data.tagline || '') || containsBadWord(currentPublishingChapterTitle || '')) {
+      showToast('Your book title, chapter title, or tagline contains inappropriate language. Please revise before publishing.', 'warning');
       return;
     }
     if (currentPublishingId) {
@@ -2227,9 +2228,11 @@ const handleSpinWheel = () => {
         const targetIndex = currentPublishingChapterIndex !== null ? currentPublishingChapterIndex : updatedChapters.length - 1;
 
         if (targetIndex >= 0 && targetIndex < updatedChapters.length) {
-          updatedChapters[targetIndex] = { ...updatedChapters[targetIndex], content: currentPublishingContent };
+          const resolvedChapterTitle = currentPublishingChapterTitle.trim() || updatedChapters[targetIndex]?.title || `Chapter ${targetIndex + 1}`;
+          updatedChapters[targetIndex] = { ...updatedChapters[targetIndex], title: resolvedChapterTitle, content: currentPublishingContent };
         } else {
-          updatedChapters.push({ title: `Chapter ${updatedChapters.length + 1}`, content: currentPublishingContent });
+          const resolvedChapterTitle = currentPublishingChapterTitle.trim() || `Chapter ${updatedChapters.length + 1}`;
+          updatedChapters.push({ title: resolvedChapterTitle, content: currentPublishingContent });
         }
 
         const updatedLikes = (() => { const arr = Array.isArray(existingBook.likes) ? [...existingBook.likes] : [existingBook.likes || 0]; while (arr.length < updatedChapters.length) arr.push(0); return arr; })();
@@ -2280,7 +2283,7 @@ const handleSpinWheel = () => {
         content: currentPublishingContent,
         isDraft: false,
         commentsEnabled: data.commentsEnabled ?? true,
-        chapters: [{ title: 'Chapter 1', content: currentPublishingContent }],
+        chapters: [{ title: currentPublishingChapterTitle.trim() ||'Chapter 1', content: currentPublishingContent }],
         isFree: true,
         price: 0
       };
@@ -2299,6 +2302,7 @@ const handleSpinWheel = () => {
     setView('self-profile');
     setCurrentPublishingContent('');
     setCurrentPublishingTitle('');
+    setCurrentPublishingChapterTitle('');
     setCurrentPublishingId(null);
     setCurrentPublishingChapterIndex(null);
     setPublishingInitialData(null);
@@ -2404,7 +2408,7 @@ const handleSpinWheel = () => {
     await fbService.updateBook(bookId, { monetizationAttempts: (book?.monetizationAttempts || 0) + 1 });
   };
 
-  const handleSaveDraft = async (bookId: string | null, title: string, content: string, chapterIndex: number | null): Promise<string | null> => {
+  const handleSaveDraft = async (bookId: string | null, title: string, content: string, chapterIndex: number | null, chapterTitle?: string): Promise<string | null> => {
     if (!title.trim() && !bookId) return null;
     let newBookId = bookId;
     if (bookId) {
@@ -2413,9 +2417,11 @@ const handleSpinWheel = () => {
       if (existingBook) {
         const updatedChapters = [...(existingBook.chapters || [])];
         if (chapterIndex !== null && chapterIndex >= 0 && chapterIndex < updatedChapters.length) {
-          updatedChapters[chapterIndex] = { ...updatedChapters[chapterIndex], content };
+          const resolvedChapterTitle = (chapterTitle || '').trim() || updatedChapters[chapterIndex]?.title || `Chapter ${chapterIndex + 1}`;
+          updatedChapters[chapterIndex] = { ...updatedChapters[chapterIndex], title: resolvedChapterTitle, content };
         } else if (content.trim()) {
-          updatedChapters.push({ title: `Chapter ${updatedChapters.length + 1}`, content });
+          const resolvedChapterTitle = (chapterTitle || '').trim() || `Chapter ${updatedChapters.length + 1}`;
+          updatedChapters.push({ title: resolvedChapterTitle, content });
         }
         await fbService.updateBook(bookId, {
           title: title.trim() || existingBook.title,
@@ -2431,7 +2437,8 @@ const handleSpinWheel = () => {
     const existingDraft = books.find((b: Book) => b.isDraft && b.title === title.trim() && b.author.username === user?.username);
     if (existingDraft) {
       newBookId = existingDraft.id;
-      const updatedChapters = content.trim() ? [{ title: 'Chapter 1', content }] : [];
+      const resolvedChapterTitle = (chapterTitle || '').trim() || 'Chapter 1';
+      const updatedChapters = content.trim() ? [{ title: resolvedChapterTitle, content }] : [];
       await fbService.updateBook(existingDraft.id, {
         title: title.trim() || existingDraft.title,
         content,
@@ -2441,6 +2448,7 @@ const handleSpinWheel = () => {
       });
     } else {
       // Create new draft in Firestore and return the real document id
+      const resolvedChapterTitle = (chapterTitle || '').trim() || 'Chapter 1';
       const bookData = {
         title: title.trim(),
         authorUid: firebaseUid || '',
@@ -2458,7 +2466,7 @@ const handleSpinWheel = () => {
         genres: [],
         hashtags: [],
         content,
-        chapters: content.trim() ? [{ title: 'Chapter 1', content }] : []
+        chapters: content.trim() ? [{ title: resolvedChapterTitle, content }] : []
       };
       const created = await fbService.createBook(bookData);
       newBookId = (created as any).id;
@@ -3126,11 +3134,12 @@ const handleSpinWheel = () => {
             setLastSelectedBookId(id);
             setLastSelectedChapterIndex(ch);
           }}
-          onPublish={async (id: string|null, title: string, content: string, chapterIndex: number | null) => {
+          onPublish={async (id: string|null, title: string, content: string, chapterIndex: number | null, chapterTitle: string) => {
 
             let effectiveId = id;
             if (!effectiveId) {
               // For new books, create in Firestore and wait for the ID
+              const resolvedChapterTitle = chapterTitle.trim() || 'Chapter 1';
               const bookData = {
                 title: title.trim(),
                 authorUid: firebaseUid || '',
@@ -3148,7 +3157,7 @@ const handleSpinWheel = () => {
                 genres: [],
                 hashtags: [],
                 content,
-                chapters: content.trim() ? [{ title: 'Chapter 1', content }] : []
+                chapters: content.trim() ? [{ title: resolvedChapterTitle, content }] : []
               };
               try {
                 const created = await fbService.createBook(bookData);
@@ -3159,7 +3168,7 @@ const handleSpinWheel = () => {
               }
             } else {
               // Existing book — save draft
-              await handleSaveDraft(id, title, content, chapterIndex);
+              await handleSaveDraft(id, title, content, chapterIndex, chapterTitle);
             }
 
             if (effectiveId) {
@@ -3167,6 +3176,7 @@ const handleSpinWheel = () => {
               setCurrentPublishingId(effectiveId);
               setCurrentPublishingTitle(title);
               setCurrentPublishingContent(content);
+              setCurrentPublishingChapterTitle(chapterTitle.trim());
               setCurrentPublishingChapterIndex(chapterIndex);
               setPublishingInitialData(existingBook ? {
                 tagline: existingBook.tagline,
@@ -6117,6 +6127,7 @@ const ChatConversationView = ({ currentUsername, currentDisplayName, targetUsern
 
 const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = 'new', onSelectionChange, onUnpublishChapter, onDeleteChapter, onPublish, onSaveDraft, onMonetize, showToast, onBack, onNotify }: any) => {
   const [newTitle, setNewTitle] = useState('');
+  const [chapterTitle, setChapterTitle] = useState('Chapter 1');
   const [selectedBookId, setSelectedBookId] = useState<string>(initialBookId);
   const [selectedChapterIndex, setSelectedChapterIndex] = useState<string>(initialChapterIndex);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -6133,7 +6144,7 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
   const dirtyDraftRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
   const saveInFlightRef = useRef(false);
-  const latestStateRef = useRef({ selectedBookId: initialBookId, selectedChapterIndex: initialChapterIndex, newTitle: '' });
+  const latestStateRef = useRef({ selectedBookId: initialBookId, selectedChapterIndex: initialChapterIndex, newTitle: '', chapterTitle: 'Chapter 1' });
   const toolbarRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -6326,6 +6337,7 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
     const currentChapterIndex = isSavingNewChapter
       ? null
       : parseInt(latestStateRef.current.selectedChapterIndex, 10);
+    const currentChapterTitle = latestStateRef.current.chapterTitle;
     const currentContent = editorRef.current?.innerHTML || '';
 
     if (!currentBookId && !currentTitle.trim()) return null;
@@ -6335,7 +6347,7 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
     setSaveState('saving');
 
     try {
-      const savedId = await onSaveDraft(currentBookId, currentTitle, currentContent, currentChapterIndex);
+      const savedId = await onSaveDraft(currentBookId, currentTitle, currentContent, currentChapterIndex, currentChapterTitle);
       if (savedId && latestStateRef.current.selectedBookId === 'new') {
         setSelectedBookId(savedId);
       }
@@ -6364,8 +6376,8 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
   }, []);
 
   useEffect(() => {
-    latestStateRef.current = { selectedBookId, selectedChapterIndex, newTitle };
-  }, [selectedBookId, selectedChapterIndex, newTitle]);
+    latestStateRef.current = { selectedBookId, selectedChapterIndex, newTitle, chapterTitle };
+  }, [selectedBookId, selectedChapterIndex, newTitle, chapterTitle]);
 
   useEffect(() => {
     onSelectionChange?.(selectedBookId, selectedChapterIndex);
@@ -6376,6 +6388,7 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
       setNewTitle(selectedBook.title);
     } else if (selectedBookId === 'new') {
       setNewTitle('');
+      setChapterTitle('Chapter 1');
       setSelectedChapterIndex('new');
     }
   }, [selectedBookId, selectedBook]);
@@ -6387,11 +6400,15 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
     if (selectedBookId !== 'new' && !selectedBook) return;
 
     let content = '';
+    let nextChapterTitle = 'Chapter 1';
     if (selectedBook && selectedChapterIndex !== 'new') {
       const idx = parseInt(selectedChapterIndex);
       if (selectedBook.chapters && selectedBook.chapters[idx]) {
         content = selectedBook.chapters[idx].content;
+        nextChapterTitle = selectedBook.chapters[idx].title || `Chapter ${idx + 1}`;
       }
+    } else if (selectedBook && selectedChapterIndex === 'new') {
+      nextChapterTitle = `Chapter ${(selectedBook.chapters?.length || 0) + 1}`;
     }
     
     if (editorRef.current) {
@@ -6401,6 +6418,7 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
       const nextCount = calculateWordCount(editorRef.current.innerText || '');
       lastValidWordCountRef.current = nextCount;
       setWordCount(nextCount);
+      setChapterTitle(nextChapterTitle);
       dirtyDraftRef.current = false;
       setSaveState('idle');
     }
@@ -6506,6 +6524,19 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
               ))}
             </select>
           </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest ml-2">Chapter Title</label>
+            <input
+              placeholder="Enter chapter title..."
+              value={chapterTitle}
+              onChange={(e) => {
+                dirtyDraftRef.current = true;
+                setChapterTitle(e.target.value);
+              }}
+              className="w-full bg-gray-50 border-none rounded-2xl px-6 py-4 text-sm font-medium outline-none shadow-sm focus:ring-2 focus:ring-accent/10"
+            />
+          </div>
         </div>
         
                 <div className="relative">
@@ -6587,7 +6618,7 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
             }}>{saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? '✓ Saved!' : saveState === 'error' ? 'Retry Save' : 'Save Draft'}</Button>
           <Button disabled={!canPublish} onClick={() => {
               const currentContent = editorRef.current?.innerHTML || "";
-              onPublish(selectedBookId === 'new' ? null : selectedBookId, newTitle, currentContent, selectedChapterIndex === 'new' ? null : parseInt(selectedChapterIndex));
+              onPublish(selectedBookId === 'new' ? null : selectedBookId, newTitle, currentContent, selectedChapterIndex === 'new' ? null : parseInt(selectedChapterIndex), chapterTitle);
             }}>Publish</Button>
         </div>
       </div>
