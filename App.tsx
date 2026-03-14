@@ -3101,7 +3101,7 @@ const handleSpinWheel = () => {
                   
                   return (
                   <div key={b.id} onClick={() => { setSelectedBook(b); setView('book-detail'); }} className="space-y-2 cursor-pointer w-28">
-                    <div className="aspect-[2/3] rounded-lg shadow-lg border-2 border-white overflow-hidden relative" style={{ backgroundColor: b.coverColor }}>
+                    <div className="aspect-[2/3] rounded-2x1 shadow-lg overflow-hidden relative" style={{ backgroundColor: b.coverColor }}>
                       <CoverImg book={b} />
                       <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/60 to-transparent z-20">
             {currentChapterTitle && (
@@ -3260,7 +3260,7 @@ const handleSpinWheel = () => {
                   {/* Updated to filter out drafts */}
                   {books.filter(b => b.author.username === user.username && !b.isDraft).map(b => (
                     <div key={b.id} onClick={() => { setSelectedBook(b); setView('book-detail'); }} className="flex-shrink-0 w-32 cursor-pointer space-y-2">
-                      <div className={`aspect-[2/3] rounded-lg shadow-md border-4 border-white overflow-hidden relative ${b.isDraft ? 'opacity-50' : ''}`} style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
+                      <div className={`aspect-[2/3] shadow-md overflow-hidden relative ${b.isDraft ? 'opacity-50' : ''}`} style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
                       <div className="px-1">
                         <p className="text-xs font-bold truncate">{b.title}</p>
                         <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider truncate">{b.author.displayName}</p>
@@ -3275,7 +3275,7 @@ const handleSpinWheel = () => {
                 <div className="flex gap-6 overflow-x-auto no-scrollbar px-2">
                   {books.filter(b => b.isFavorite).map(b => (
                     <div key={b.id} onClick={() => { setSelectedBook(b); setView('book-detail'); }} className="flex-shrink-0 w-32 cursor-pointer space-y-2">
-                      <div className="aspect-[2/3] rounded-lg shadow-md border-4 border-white overflow-hidden relative" style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
+                      <div className="aspect-[2/3] shadow-md overflow-hidden relative" style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
                       <div className="px-1">
                         <p className="text-xs font-bold truncate">{b.title}</p>
                         <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider truncate">{b.author.displayName}</p>
@@ -3913,7 +3913,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [],
         {/* Star of the week Section — only when not searching */}
         {!query && spotlightBook && (
           <section className="px-6">
-            <div className="relative group cursor-pointer overflow-hidden rounded-[2.2rem] bg-[#090b12] shadow-2xl shadow-black/10 border border-white/10 transition-all duration-300 hover:-translate-y-1 active:scale-[0.98]" onClick={() => onSelect(spotlightBook)}>
+            <div className="relative group cursor-pointer overflow-hidden rounded-2x1 bg-[#090b12] shadow-2xl shadow-black/10 border border-white/10 transition-all duration-300 hover:-translate-y-1 active:scale-[0.98]" onClick={() => onSelect(spotlightBook)}>
               <div className="absolute inset-0 opacity-70" style={{ background: `radial-gradient(circle at 30% 90%, ${spotlightBook.coverColor}66 0%, transparent 72%), linear-gradient(140deg, #0c1324 0%, #101115 45%, #23181d 100%)` }} />
               <div className="absolute -left-20 top-6 h-40 w-40 rounded-full blur-3xl opacity-35" style={{ backgroundColor: spotlightBook.coverColor }} />
               <div className="absolute right-0 bottom-0 w-full h-1/2 bg-gradient-to-t from-black/25 to-transparent" />
@@ -3927,7 +3927,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [],
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center gap-6 sm:gap-7">
-                  <div className="w-28 h-40 sm:w-32 sm:h-48 flex-shrink-0 rounded-2xl shadow-2xl border border-white/25 transform -rotate-3 group-hover:rotate-0 transition-transform duration-300 overflow-hidden relative" style={{ backgroundColor: spotlightBook.coverColor }}>
+                  <div className="w-28 h-40 sm:w-32 sm:h-48 flex-shrink-0 shadow-2xl border border-white/25 transform -rotate-3 group-hover:rotate-0 transition-transform duration-300 overflow-hidden relative" style={{ backgroundColor: spotlightBook.coverColor }}>
                     <CoverImg book={spotlightBook} />
                   </div>
 
@@ -4040,7 +4040,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [],
             <div className={isExpanded ? "grid grid-cols-5 sm:grid-cols-6 md:grid-cols-7 lg:grid-cols-8 gap-3 px-6 pb-4" : "flex overflow-x-auto no-scrollbar gap-6 px-6 pb-4"}>
               {displayData.length > 0 ? displayData.map((b: any) => (
                 <div key={b.id} onClick={() => onSelect(b)} className={`${isExpanded ? 'w-full' : 'flex-shrink-0 w-44'} space-y-2 group cursor-pointer transition-all active:scale-95`}>
-                  <div className={`aspect-[2/3] ${isExpanded ? 'rounded-lg border-2' : 'rounded-lg border-4'} shadow-xl border-white overflow-hidden relative transition-transform group-hover:-translate-y-2`} style={{ backgroundColor: b.coverColor }}>
+                  <div className={`aspect-[2/3] ${isExpanded ? 'border-1' : 'border-2'} shadow-xl border-white overflow-hidden relative transition-transform group-hover:-translate-y-2`} style={{ backgroundColor: b.coverColor }}>
                      <CoverImg book={b} />
                      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity z-10" />
                      {b.isExplicit && (
@@ -4216,7 +4216,7 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
                  <>
                    <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-2">Currently Reading</h3>
                    <button onClick={() => onBookSelect(readingBook)} className="w-full bg-gray-50 p-5 rounded-[2rem] border border-gray-100 flex gap-4 items-center transition-all active:scale-[0.98] hover:border-accent/30 group">
-                     <div className="w-14 h-20 rounded-lg overflow-hidden relative flex-shrink-0 shadow-md" style={{ backgroundColor: readingBook.coverColor }}>
+                     <div className="w-14 h-20 overflow-hidden relative flex-shrink-0 shadow-md" style={{ backgroundColor: readingBook.coverColor }}>
                        <CoverImg book={readingBook} />
                      </div>
                      <div className="flex-1 text-left space-y-2">
@@ -4261,7 +4261,7 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
           {/* Filtered to only show published books */}
             {books.filter((b: Book) => b.author.username === user.username && !b.isDraft).map((b: Book) => (
               <div key={b.id} onClick={() => onBookSelect(b)} className="flex-shrink-0 w-32 space-y-2 cursor-pointer transition-transform active:scale-95">
-                <div className="aspect-[2/3] rounded-lg shadow-md border-4 border-white overflow-hidden relative" style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
+                <div className="aspect-[2/3] shadow-md border-1 border-white overflow-hidden relative" style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
                 <div className="px-1">
                   <p className="text-[10px] font-bold truncate">{b.title}</p>
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider truncate">{b.author.displayName}</p>
@@ -4277,7 +4277,7 @@ const OtherProfileView = ({ user, books, onBack, onBookSelect, onAdmire, onBlock
           <div className="flex gap-6 overflow-x-auto no-scrollbar pb-2">
             {books.filter((b: Book) => favoriteBookIds.has(b.id)).map((b: Book) => (
               <div key={b.id} onClick={() => onBookSelect(b)} className="flex-shrink-0 w-32 cursor-pointer space-y-2">
-                <div className="aspect-[2/3] rounded-lg shadow-md border-4 border-white overflow-hidden relative" style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
+                <div className="aspect-[2/3] shadow-md border-1 border-white overflow-hidden relative" style={{ backgroundColor: b.coverColor }}><CoverImg book={b} /></div>
                 <div className="px-1">
                   <p className="text-[10px] font-bold truncate">{b.title}</p>
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider truncate">{b.author.displayName}</p>
@@ -4314,7 +4314,7 @@ const PublicBookDetailPage = ({ currentUser, book, totalCommentsCount = 0, isOwn
         </div>
       </header>
       <div className="flex flex-col items-center p-6 text-center">
-        <div className="w-56 h-80 rounded-lg shadow-2xl border-4 border-white mb-10 transform -rotate-1 relative overflow-hidden" style={{ backgroundColor: book.coverColor }}>
+        <div className="w-56 h-80 shadow-2xl border-1 border-white mb-10 transform -rotate-1 relative overflow-hidden" style={{ backgroundColor: book.coverColor }}>
           <CoverImg book={book} />
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
         </div>
