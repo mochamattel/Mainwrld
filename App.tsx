@@ -5126,8 +5126,45 @@ const PublishingView = ({ initialData, onPost, onBack, isNewBook}: any) => {
   const [commentsEnabled, setCommentsEnabled] = useState(initialData?.commentsEnabled !== false);
   const [selectedGenres, setSelectedGenres] = useState<string[]>(initialData?.genres ||[]);
   const [hashtags, setHashtags] = useState(initialData?.hashtags?.join(', ') ||'');
-  const [coverImage, setCoverImage] = useState<string | null>(null);
+  const [coverImage, setCoverImage] = useState<string | null>(initialData?.coverImage || null);
+  const [coverUploadError, setCoverUploadError] = useState<string>('');
+  const [isProcessingCover, setIsProcessingCover] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const fileToDataUrl = useCallback((file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => resolve(ev.target?.result as string);
+      reader.onerror = () => reject(new Error('Failed to read selected image file.'));
+      reader.readAsDataURL(file);
+    });
+  }, []);
+
+  const compressCoverImage = useCallback(async (file: File): Promise<string> => {
+    const rawDataUrl = await fileToDataUrl(file);
+    const image = new Image();
+
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('Failed to decode selected image.'));
+      image.src = rawDataUrl;
+    });
+
+    const maxWidth = 800;
+    const maxHeight = 1200;
+    const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+    const width = Math.max(1, Math.floor(image.width * scale));
+    const height = Math.max(1, Math.floor(image.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Image processing unavailable in this browser.');
+
+    ctx.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL('image/jpeg', 0.78);
+  }, [fileToDataUrl]);
 
   const toggleGenre = (genre: string) => {
     setSelectedGenres(prev =>
@@ -5138,12 +5175,28 @@ const PublishingView = ({ initialData, onPost, onBack, isNewBook}: any) => {
   const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setCoverImage(ev.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+    if (!file.type.startsWith('image/')) {
+      setCoverUploadError('Please choose an image file.');
+      return;
+    }
+
+    setCoverUploadError('');
+    setIsProcessingCover(true);
+    compressCoverImage(file)
+      .then((compressed) => {
+        // Firestore documents cap at 1 MiB; keep cover payload comfortably below that.
+        if (compressed.length > 380000) {
+          setCoverUploadError('Image is still too large. Try a smaller image.');
+          return;
+        }
+        setCoverImage(compressed);
+      })
+      .catch(() => {
+        setCoverUploadError('Failed to process image. Please try another file.');
+      })
+      .finally(() => {
+        setIsProcessingCover(false);
+      });
   };
 
   return (
@@ -5163,6 +5216,9 @@ const PublishingView = ({ initialData, onPost, onBack, isNewBook}: any) => {
                 onChange={handleCoverUpload}
                 className="hidden"
               />
+              {coverUploadError && (
+                <p className="text-[10px] font-bold text-red-500 ml-2">{coverUploadError}</p>
+              )}
               {coverImage ? (
                 <div className="relative w-40 aspect-[2/3] rounded-3xl overflow-hidden shadow-lg border-4 border-white group">
                   <img src={coverImage} className="w-full h-full object-cover" />
@@ -5182,7 +5238,7 @@ const PublishingView = ({ initialData, onPost, onBack, isNewBook}: any) => {
                   className="w-40 aspect-[2/3] bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-300 gap-2 cursor-pointer hover:border-accent hover:text-accent transition-colors"
                 >
                   <span className="material-icons-round">add_photo_alternate</span>
-                  <span className="text-[9px] font-bold uppercase">Upload</span>
+                  <span className="text-[9px] font-bold uppercase">{isProcessingCover ? 'Processing...' : 'Upload'}</span>
                 </button>
               )}
             </section>
@@ -5223,7 +5279,7 @@ const PublishingView = ({ initialData, onPost, onBack, isNewBook}: any) => {
 
         <div className="grid grid-cols-2 gap-4">
           <Button variant="outline" onClick={onBack}>Cancel</Button>
-          <Button onClick={() => {
+          <Button disabled={isProcessingCover || !!coverUploadError} onClick={() => {
             onPost({
               tagline,
               isExplicit,
