@@ -3903,18 +3903,17 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [],
         {/* Star of the week Section — only when not searching */}
         {!query && spotlightBook && (
           <section className="px-6">
-            <div className="relative group cursor-pointer overflow-hidden rounded-[2.2rem] bg-[#090b12] shadow-2xl shadow-black/20 border border-white/10 transition-all duration-300 hover:-translate-y-1 active:scale-[0.98]" onClick={() => onSelect(spotlightBook)}>
-              <div className="absolute inset-0 opacity-70" style={{ background: `radial-gradient(circle at 80% 10%, ${spotlightBook.coverColor}66 0%, transparent 52%), linear-gradient(140deg, #0c1324 0%, #101115 45%, #23181d 100%)` }} />
+            <div className="relative group cursor-pointer overflow-hidden rounded-[2.2rem] bg-[#090b12] shadow-2xl shadow-black/10 border border-white/10 transition-all duration-300 hover:-translate-y-1 active:scale-[0.98]" onClick={() => onSelect(spotlightBook)}>
+              <div className="absolute inset-0 opacity-70" style={{ background: `radial-gradient(circle at 30% 90%, ${spotlightBook.coverColor}66 0%, transparent 72%), linear-gradient(140deg, #0c1324 0%, #101115 45%, #23181d 100%)` }} />
               <div className="absolute -left-20 top-6 h-40 w-40 rounded-full blur-3xl opacity-35" style={{ backgroundColor: spotlightBook.coverColor }} />
-              <div className="absolute right-0 bottom-0 w-full h-1/2 bg-gradient-to-t from-black/55 to-transparent" />
+              <div className="absolute right-0 bottom-0 w-full h-1/2 bg-gradient-to-t from-black/25 to-transparent" />
 
               <div className="relative p-6 sm:p-8">
                 <div className="flex items-start justify-between gap-4 mb-5">
                   <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-white">
                     <span className="material-icons-round text-[15px]">auto_awesome</span>
-                    <span className="text-[9px] font-black uppercase tracking-[0.25em]">Spotlight Book</span>
+                    <span className="text-[9px] font-black uppercase tracking-[0.25em]">Star of the Week</span>
                   </div>
-                  <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/75">Tap to open</div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center gap-6 sm:gap-7">
@@ -3927,7 +3926,7 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [],
                     <p className="text-[11px] text-white/80 font-semibold uppercase tracking-[0.16em]">By {spotlightBook.author.displayName}</p>
                     <p className="text-sm text-white/65 line-clamp-2 italic">"{spotlightBook.tagline}"</p>
 
-                    <span className="inline-flex px-3 py-1.5 rounded-full bg-white/10 border border-white/20 text-white/90 text-[10px] font-bold uppercase tracking-wider mt-1">
+                    <span className="inline-flex px-3 py-1.5 rounded-full bg-white/10 border border-white/20 textgit-white/90 text-[10px] font-bold uppercase tracking-wider mt-1">
                       {spotlightBook.genres?.[0] || 'Featured'}
                     </span>
                   </div>
