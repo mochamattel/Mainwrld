@@ -3287,7 +3287,8 @@ const handleSpinWheel = () => {
         // Sort once: newest first
         const sortedNotifs = notifications
           .filter(n => n.recipient === user.username && !blockedUsers.has(n.sender || ''))
-          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .slice(0, 20);
         // Mark all as read after a short delay so user sees unread state first
         if (sortedNotifs.some(n => !n.read)) {
           setTimeout(() => fbService.markNotificationsRead(user.username).catch(console.error), 2000);
@@ -3899,18 +3900,37 @@ const ExploreView = ({ books, onSelect, onAuthorSelect, onOwnSelect, users = [],
           </section>
         )}
 
-        {/* Star of the wekk Section — only when not searching */}
+        {/* Star of the week Section — only when not searching */}
         {!query && spotlightBook && (
           <section className="px-6">
-            <div className="relative group cursor-pointer overflow-hidden rounded-[2.5rem] bg-black shadow-x1 transition-transform active:scale-[0.98]" onClick={() => onSelect(spotlightBook)}>
-              <div className="absolute inset-0 opacity-40 blur-3xl scale-100" style={{ backgroundColor: spotlightBook.coverColor }} />
-              <div className="relative aspect-[16/10] flex items-center p-8 gap-6 bg-gradient-to-br from-black/60 to-transparent">
-                <div className="w-28 h-40 flex-shrink-0 rounded-lg shadow-2xl border-4 border-white/20 transform -rotate-3 transition-transform group-hover:rotate-0 overflow-hidden relative" style={{ backgroundColor: spotlightBook.coverColor }}><CoverImg book={spotlightBook} /></div>
-                <div className="space-y-3 flex-1">
-                  <div className="inline-block px-3 py-1 bg-accent rounded-full text-[8px] font-bold text-white uppercase tracking-[0.2em] mb-2">STAR OF THE WEEK</div>
-                  <h2 className="text-2xl font-display text-white line-clamp-2 leading-tight">{spotlightBook.title}</h2>
-                  <p className="text-[11px] text-white/70 font-medium uppercase tracking-widest">By {spotlightBook.author.displayName}</p>
-                  <p className="text-xs text-white/50 line-clamp-2 italic">"{spotlightBook.tagline}"</p>
+            <div className="relative group cursor-pointer overflow-hidden rounded-[2.2rem] bg-[#090b12] shadow-2xl shadow-black/20 border border-white/10 transition-all duration-300 hover:-translate-y-1 active:scale-[0.98]" onClick={() => onSelect(spotlightBook)}>
+              <div className="absolute inset-0 opacity-70" style={{ background: `radial-gradient(circle at 80% 10%, ${spotlightBook.coverColor}66 0%, transparent 52%), linear-gradient(140deg, #0c1324 0%, #101115 45%, #23181d 100%)` }} />
+              <div className="absolute -left-20 top-6 h-40 w-40 rounded-full blur-3xl opacity-35" style={{ backgroundColor: spotlightBook.coverColor }} />
+              <div className="absolute right-0 bottom-0 w-full h-1/2 bg-gradient-to-t from-black/55 to-transparent" />
+
+              <div className="relative p-6 sm:p-8">
+                <div className="flex items-start justify-between gap-4 mb-5">
+                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-white">
+                    <span className="material-icons-round text-[15px]">auto_awesome</span>
+                    <span className="text-[9px] font-black uppercase tracking-[0.25em]">Spotlight Book</span>
+                  </div>
+                  <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/75">Tap to open</div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center gap-6 sm:gap-7">
+                  <div className="w-28 h-40 sm:w-32 sm:h-48 flex-shrink-0 rounded-2xl shadow-2xl border border-white/25 transform -rotate-3 group-hover:rotate-0 transition-transform duration-300 overflow-hidden relative" style={{ backgroundColor: spotlightBook.coverColor }}>
+                    <CoverImg book={spotlightBook} />
+                  </div>
+
+                  <div className="space-y-3 flex-1 min-w-0">
+                    <h2 className="text-2xl sm:text-3xl font-display text-white line-clamp-2 leading-tight drop-shadow-sm">{spotlightBook.title}</h2>
+                    <p className="text-[11px] text-white/80 font-semibold uppercase tracking-[0.16em]">By {spotlightBook.author.displayName}</p>
+                    <p className="text-sm text-white/65 line-clamp-2 italic">"{spotlightBook.tagline}"</p>
+
+                    <span className="inline-flex px-3 py-1.5 rounded-full bg-white/10 border border-white/20 text-white/90 text-[10px] font-bold uppercase tracking-wider mt-1">
+                      {spotlightBook.genres?.[0] || 'Featured'}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -5056,7 +5076,7 @@ const MonetizationRequestView = ({ works, onBack, onRequest, showToast}: any) =>
     const r = [];
     if (!selectedBook.isCompleted) r.push('Mark as complete');
     if (selectedBook.chaptersCount < 5) r.push('At least 5 published chapters');
-    if ((selectedBook.minLikesPerChapter || 0) < 50) r.push('50+ likes per published chapter');
+    if ((selectedBook.minLikesPerChapter || 0) < 100) r.push('100+ likes per published chapter');
 
     // 21 days logic
     const publishedDate = new Date(selectedBook.publishedDate);
