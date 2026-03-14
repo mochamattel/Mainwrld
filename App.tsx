@@ -6121,7 +6121,8 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
   const [selectedChapterIndex, setSelectedChapterIndex] = useState<string>(initialChapterIndex);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [wordCount, setWordCount] = useState(0); // Reactive word count state
-   const [deleteConfirmIdx, setDeleteConfirmIdx] = useState<number | null>(null);
+  const [deleteConfirmIdx, setDeleteConfirmIdx] = useState<number | null>(null);
+  const [showToolbar, setShowToolbar] = useState(false);
   const [unpublishConfirmIdx, setUnpublishConfirmIdx] = useState<number | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const loadedEditorTargetRef = useRef('');
@@ -6133,7 +6134,18 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
   const saveTimerRef = useRef<number | null>(null);
   const saveInFlightRef = useRef(false);
   const latestStateRef = useRef({ selectedBookId: initialBookId, selectedChapterIndex: initialChapterIndex, newTitle: '' });
-  
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (toolbarRef.current && !toolbarRef.current.contains(event.target as Node)) {
+        setShowToolbar(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const myWorks = useMemo(() => books.filter((b: Book) => b.author.username === user.username), [books, user]);
   const selectedBook = useMemo(() => myWorks.find((w: Book) => w.id === selectedBookId), [myWorks, selectedBookId]);
 
@@ -6462,7 +6474,7 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
         <Button variant="secondary" className="h-10 px-4" onClick={onMonetize}><span className="material-icons-round text-sm">paid</span> Monetize</Button>
       </header>
 
-      <div className="flex-1 p-6 space-y-6 overflow-y-auto no-scrollbar">
+      <div className="flex-1 p-6 space-y-6 overflow-y-auto no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', scrollBehavior: 'smooth' }}>
         <div className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest ml-2">Your Works</label>
@@ -6496,20 +6508,34 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
           </div>
         </div>
         
-        <div className="flex flex-wrap gap-1 p-1 bg-gray-50 rounded-2xl border border-gray-100 sticky top-0 z-10 shadow-sm">
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('bold'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Bold"><span className="material-icons-round text-sm">format_bold</span></button>
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('italic'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Italic"><span className="material-icons-round text-sm">format_italic</span></button>
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('underline'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Underline"><span className="material-icons-round text-sm">format_underlined</span></button>
-          <div className="w-px h-6 bg-gray-200 mx-1 self-center" />
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('justifyLeft'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Align Left"><span className="material-icons-round text-sm">format_align_left</span></button>
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('justifyCenter'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Align Center"><span className="material-icons-round text-sm">format_align_center</span></button>
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('justifyRight'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Align Right"><span className="material-icons-round text-sm">format_align_right</span></button>
-          <div className="w-px h-6 bg-gray-200 mx-1 self-center" />
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('insertUnorderedList'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Bullet List"><span className="material-icons-round text-sm">format_list_bulleted</span></button>
-          <button onMouseDown={(e) => { e.preventDefault(); execAction('insertOrderedList'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-white transition-all active:scale-90" title="Numbered List"><span className="material-icons-round text-sm">format_list_numbered</span></button>
+                <div className="relative">
+          <div className="flex justify-end sticky top-0 z-[60] pointer-events-none">
+            <div ref={toolbarRef} className="pointer-events-auto relative">
+              <button 
+                onClick={() => setShowToolbar(!showToolbar)}
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all shadow-lg border ${showToolbar ? 'bg-accent text-white border-accent' : 'bg-white text-gray-400 border-gray-100'}`}
+                title="Formatting Options"
+              >
+                <span className="material-icons-round">{showToolbar ? 'close' : 'edit'}</span>
+              </button>
+
+              {showToolbar && (
+                <div className="absolute right-0 mt-2 p-2 bg-white rounded-2xl border border-gray-100 shadow-2xl flex flex-col gap-1 animate-in slide-in-from-top-2 duration-200 z-[70] min-w-[48px]">
+                  <button onMouseDown={(e) => { e.preventDefault(); execAction('bold'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-accent/5 transition-all active:scale-90" title="Bold"><span className="material-icons-round text-sm">format_bold</span></button>
+                  <button onMouseDown={(e) => { e.preventDefault(); execAction('italic'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-accent/5 transition-all active:scale-90" title="Italic"><span className="material-icons-round text-sm">format_italic</span></button>
+                  <button onMouseDown={(e) => { e.preventDefault(); execAction('underline'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-accent/5 transition-all active:scale-90" title="Underline"><span className="material-icons-round text-sm">format_underlined</span></button>
+                  <div className="h-px w-6 bg-gray-100 mx-auto my-1" />
+                  <button onMouseDown={(e) => { e.preventDefault(); execAction('justifyLeft'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-accent/5 transition-all active:scale-90" title="Align Left"><span className="material-icons-round text-sm">format_align_left</span></button>
+                  <button onMouseDown={(e) => { e.preventDefault(); execAction('justifyCenter'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-accent/5 transition-all active:scale-90" title="Align Center"><span className="material-icons-round text-sm">format_align_center</span></button>
+                  <button onMouseDown={(e) => { e.preventDefault(); execAction('justifyRight'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-accent/5 transition-all active:scale-90" title="Align Right"><span className="material-icons-round text-sm">format_align_right</span></button>
+                  <div className="h-px w-6 bg-gray-100 mx-auto my-1" />
+                  <button onMouseDown={(e) => { e.preventDefault(); execAction('insertUnorderedList'); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:text-accent hover:bg-accent/5 transition-all active:scale-90" title="Bullet List"><span className="material-icons-round text-sm">format_list_bulleted</span></button>
+                </div>
+              )}
+            </div>
         </div>
 
-        <div className="relative min-h-[400px]">
+          <div className="relative min-h-[400px] mt-4">
           {selectedBook && selectedBook.isCompleted ? (
             <div className="w-full min-h-[400px] flex flex-col items-center justify-center text-center p-8 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
               <span className="material-icons-round text-4xl text-gray-300 mb-3">lock</span>
@@ -6519,10 +6545,11 @@ const WriteView = ({ books, user, initialBookId = 'new', initialChapterIndex = '
           ) : (
             <div ref={editorRef} contentEditable="true" inputMode="text" role="textbox" aria-multiline="true" spellCheck="true" className="w-full min-h-[400px] bg-transparent border-none outline-none text-base leading-relaxed placeholder:text-gray-200 resize-none no-scrollbar focus:ring-0 rich-editor" style={{ WebkitUserSelect: 'text', userSelect: 'text', WebkitTouchCallout: 'default', touchAction: 'manipulation' }} onBeforeInput={handleBeforeInput} onPaste={handlePaste} onInput={handleEditorInput} onTouchEnd={(e) => { e.currentTarget.focus(); ensureCaretVisible(); }} />
           )}
+          </div>
         </div>
         
         {selectedChapterIndex !== 'new' && (
-          <div className="sticky bottom-0 z-20 flex gap-4 pt-4 pb-2 animate-in slide-in-from-bottom duration-300 bg-white/95 backdrop-blur-sm border-t border-gray-100">
+          <div className="flex gap-4 pt-4 pb-2 animate-in slide-in-from-bottom duration-300">
             {isPublished && (
               <button 
                 onClick={handleUnpublishClick}
