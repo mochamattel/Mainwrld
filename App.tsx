@@ -1793,7 +1793,16 @@ const App: React.FC = () => {
       setLikedBooks(next);
       chLikes[chapterIndex] = (chLikes[chapterIndex] || 0) + 1;
       const chapterTitle = targetBook.chapters?.[chapterIndex]?.title || `Chapter ${chapterIndex + 1}`;
-      addNotification('Chapter Liked', `${user?.displayName} liked ${chapterTitle} from "${targetBook.title}"`, 'favorite', targetBook.author.username);
+      const authorUsername = (targetBook as any).authorUsername || targetBook.author.username;
+      addNotification(
+        'Chapter Liked',
+        `${user?.displayName} liked ${chapterTitle} from "${targetBook.title}"`,
+        'favorite',
+        authorUsername,
+        user.username,
+        targetBook.id,
+        chapterIndex
+      );
 
       // Earned points: award book author 2 pts when chapter hits like threshold
       const rewardKey = `chapter:${bookId}:${chapterIndex}:${Math.floor(chLikes[chapterIndex] / CHAPTER_LIKES_THRESHOLD)}`;

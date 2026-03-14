@@ -316,7 +316,10 @@ export const subscribeToChatMessages = (callback: (msgs: any[]) => void): Unsubs
 // ==================== NOTIFICATIONS ====================
 
 export const addNotificationDoc = async (notif: any) => {
-  await addDoc(collection(db, 'notifications'), notif);
+  const sanitizedNotif = Object.fromEntries(
+    Object.entries(notif).filter(([, value]) => value !== undefined)
+  );
+  await addDoc(collection(db, 'notifications'), sanitizedNotif);
 };
 
 export const markNotificationsRead = async (recipientUsername: string) => {
